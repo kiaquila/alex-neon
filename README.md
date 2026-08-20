@@ -4,9 +4,9 @@
 индивидуальных занятиях по практической работе с ИИ.
 
 - Оригинал: <https://codex-po-delu-alex.alexgoodmanalexgoodm.chatgpt.site/>
-- Стенд: `https://alex-neon.ks-design.workers.dev` (после одноразового
-  подключения Worker'а владельцем аккаунта — см.
-  [`docs/stage-hosting.md`](../docs/stage-hosting.md))
+- Стенд: `https://alex-neon.ks-design.workers.dev` (Worker уже существует;
+  переключение сборок на этот репозиторий — одноразовый шаг владельца аккаунта,
+  см. [«Cloudflare-стенд»](#cloudflare-стенд))
 
 ## Deliverable
 
@@ -61,7 +61,7 @@
 - Никаких сетевых зависимостей: шрифты и статика только со своего origin,
   без аналитики и трекеров (как и в оригинале).
 - `assets/og.png` не хранится «как есть»: он воспроизводимо генерируется
-  `npm --prefix alex-neon/website run og` — тем же генератором поля
+  `npm --prefix website run og` — тем же генератором поля
   (`src/js/field.js`), что и hero, на чистом Node без шрифтов и внешних
   библиотек. Поэтому карточка не расходится с страницей.
 - Логотип Telegram-сообщества хостится локально
@@ -75,10 +75,38 @@
   в gzip; вторичный потолок в 48 КБ без сжатия защищает от случайного
   раздувания. Оба ограничения проверяются тестом.
 
+## Cloudflare-стенд
+
+Стенд — существующий Worker `alex-neon` в аккаунте владельца. Имя воркера,
+домен, идентификаторы аккаунта и токены остаются project-owned: в этом
+репозитории лежит только `website/wrangler.json`, ни одного секрета здесь нет.
+
+| Настройка | Значение |
+| --- | --- |
+| Worker | `alex-neon` |
+| Репозиторий сборок | `kiaquila/alex-neon` (после переключения) |
+| Production branch | `main` |
+| Root directory | `website` |
+| Build command | `npm run build` |
+| Production deploy command | `npm run stage:deploy` |
+| Non-production deploy command | `npm run stage:preview` |
+
+Лендинг статический: Cloudflare отдаёт его через Workers Static Assets из
+`website/dist`, а `website/worker/index.ts` нужен только чтобы навесить
+security-заголовки, которых нет у asset-пайплайна. `compatibility_date`
+зафиксирована; `workers_dev` и `preview_urls` включены.
+
+Порядок переключения и откат описаны в
+[`docs/operations/cloudflare.md`](./docs/operations/cloudflare.md). Пока
+переключения не было, тот же Worker собирается из `kiaquila/web-design`, и два
+репозитория не должны одновременно деплоить одну цель.
+
 ## Открытые вопросы
 
-- Подключение Cloudflare Worker `alex-neon` — одноразовый шаг владельца
-  аккаунта по [`docs/stage-hosting.md`](../docs/stage-hosting.md).
+- Переключение сборок Worker'а `alex-neon` с `kiaquila/web-design` на этот
+  репозиторий — одноразовый шаг владельца аккаунта, см.
+  [«Cloudflare-стенд»](#cloudflare-стенд). До него стенд продолжает собираться
+  из монорепозитория.
 - Индексация стенда: сейчас `robots.txt` разрешает обход (как у других
   проектов); если оригинал остаётся боевым, возможно, стоит закрыть стенд от
   индексации, чтобы не создавать дубль. Решение за заказчиком.
@@ -89,11 +117,14 @@
 Из корня репозитория:
 
 ```bash
-node scripts/check-repository.mjs
-npm --prefix alex-neon/website run check
+npm run preflight        # политика репозитория + дрейф managed-файлов + тесты baseline
+npm run project:check    # то, что настроено в .web-design/project.json
 ```
 
-Локальный просмотр: `npm --prefix alex-neon/website run dev`
+`npm run project:check` запускает `npm --prefix website run check` — сборку и
+тесты сайта; его же гоняет CI под именем `project-check`.
+
+Локальный просмотр: `npm --prefix website run dev`
 (<http://localhost:4600>).
 
 Для визуальных изменений дополнительно проверять 360 px и 1280 px+, состояние
