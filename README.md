@@ -49,6 +49,8 @@
 - [`CONTENT-AUDIT.md`](./CONTENT-AUDIT.md) — канонический контент, провенанс,
   осознанные отклонения.
 - [`AGENTS.md`](./AGENTS.md) — правила реализации и проверки.
+- [`docs/migration/source-provenance.md`](./docs/migration/source-provenance.md)
+  — откуда взялся этот репозиторий и чем это доказано.
 - `website/src/styles/tokens.css` — токены дизайн-системы; слои `base`,
   `layout`, `components`, `sections` собираются поверх них в этом порядке.
 
