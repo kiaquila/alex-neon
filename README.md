@@ -124,7 +124,8 @@ npm run project:check    # то, что настроено в .web-design/projec
 ```
 
 `npm run project:check` запускает `npm --prefix website run check` — сборку и
-тесты сайта; его же гоняет CI под именем `project-check`.
+тесты сайта. В CI то же самое делает проверка `project-ci`; `project-check` —
+имя команды внутри `.web-design/project.json`.
 
 Локальный просмотр: `npm --prefix website run dev`
 (<http://localhost:4600>).

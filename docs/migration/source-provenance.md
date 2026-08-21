@@ -75,9 +75,10 @@ adaptation was committed.
 
 ## Commit map
 
-`git filter-repo` wrote a full old→new commit map for all 144 rewritten
-objects. It is not committed — it describes the migration event, not the
-product — and is kept locally at
+`git filter-repo` wrote an old→new commit map covering all 143 upstream
+commits it parsed: the 5 kept commits map to their rewritten SHAs and the 138
+pruned ones map to zeros. It is not committed — it describes the migration
+event, not the product — and is kept locally at
 `~/projects/web-design/.claude/migration/alex-neon-2026-08-20/`:
 
 | File | SHA-256 |
