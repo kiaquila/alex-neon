@@ -117,17 +117,31 @@ concept is untouched.
 ## Baseline pin — provisional
 
 `.web-design/lock.json` pins
-`f567b125e4ecf07922a6b2f98b5cf17b338b478d` from the `codex/web-design-template-v2`
+`6e0050b035ba2f7bd7584fade4a028278e06e779` from the `codex/web-design-template-v2`
 branch of `kiaquila/web-design`, at version `0.1.0-dev`.
 
 **This is deliberately a provisional pin.** `kiaquila/web-design` has not yet
 published an immutable stable release, because the pull request that turns it
 into a template — [`kiaquila/web-design#46`](https://github.com/kiaquila/web-design/pull/46)
 — is still a draft and must not be merged until every project has been migrated
-and verified. `f567b125` is the exact, reachable commit that pull request
+and verified. `6e0050b0` is the exact, reachable commit that pull request
 proposes, so it is a real 40-character SHA that `baseline-source-verification`
 can download and compare, and the standard `npm run setup` adoption path
 accepted it without any workaround.
+
+### What this pin released to the project
+
+Two project-owned files changed with this pin, and neither is a baseline edit:
+
+- `.github/CODEOWNERS` left the managed manifest. It is required of every
+  repository built from the template but its owners are per-project, so the
+  baseline hands the file over rather than keeping its bytes locked. The
+  content here is unchanged; from now on this repository owns it.
+- `.web-design/project.json` states the product check as
+  `npm run check --prefix website`. The repository guard reads the word after
+  the tool to decide what a check actually runs, so an option may not sit
+  ahead of the verb; `npm --prefix website run check` is the same run written
+  in the order the guard cannot read. `README.md` quotes the new form.
 
 ### Required follow-up
 

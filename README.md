@@ -123,7 +123,7 @@ npm run preflight        # политика репозитория + дрейф 
 npm run project:check    # то, что настроено в .web-design/project.json
 ```
 
-`npm run project:check` запускает `npm --prefix website run check` — сборку и
+`npm run project:check` запускает `npm run check --prefix website` — сборку и
 тесты сайта. В CI то же самое делает проверка `project-ci`; `project-check` —
 имя команды внутри `.web-design/project.json`.
 
