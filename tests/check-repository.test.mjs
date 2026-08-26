@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { checkText, checkTrackedPath, checkWorkflowText } from "../scripts/check-repository.mjs";
+import { checkText, checkTrackedPath, checkWorkflowText, scanFileText } from "../scripts/check-repository.mjs";
 import { evaluate, headline } from "../scripts/check-codex-review.mjs";
 
 const WORKFLOW = ".github/workflows/ci.yml";
@@ -161,6 +164,46 @@ test("only a real on: key counts as a trigger", () => {
     checkWorkflowText(WORKFLOW, `name: CI\n"true":\n  pull_request:\npermissions:\n  contents: read\njobs: {}\n`),
     ["Workflow declares no on: triggers: .github/workflows/ci.yml"]
   );
+});
+
+/* Reported by Codex review: read-only `GITHUB_TOKEN` permissions say nothing
+   about the repository and organisation secrets `inherit` forwards. */
+test("a reusable-workflow job may not inherit secrets", () => {
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(
+      `jobs:\n  a:\n    uses: owner/repo/.github/workflows/x.yml@${"a".repeat(40)}\n    secrets: inherit\n`
+    )),
+    ["Reusable-workflow job may not inherit secrets in .github/workflows/ci.yml: jobs.a.secrets"]
+  );
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(
+      `jobs:\n  a:\n    uses: owner/repo/.github/workflows/x.yml@${"a".repeat(40)}\n    secrets:\n      token: \${{ secrets.ONE }}\n`
+    )),
+    []
+  );
+});
+
+/* Reported by Codex review: a large file used to be skipped outright, which is
+   exactly where a key would hide. */
+test("a secret is found in a large file, and across a chunk boundary", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "guard-"));
+  try {
+    const key = `AKIA${"0123456789ABCDEF"}`;
+    const big = join(directory, "big.json");
+    await writeFile(big, `${"x".repeat(3_000_000)}${key}\n`);
+    assert.match(scanFileText(big, "big.json")[0], /Possible AWS access key/);
+
+    /* Straddle the 1 MiB chunk boundary so the overlap window is what catches it. */
+    const split = join(directory, "split.txt");
+    await writeFile(split, `${"x".repeat((1 << 20) - 8)}${key}\n`);
+    assert.match(scanFileText(split, "split.txt")[0], /Possible AWS access key/);
+
+    const clean = join(directory, "clean.txt");
+    await writeFile(clean, "x".repeat(3_000_000));
+    assert.deepEqual(scanFileText(clean, "clean.txt"), []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 const HEAD = "f41182e430a9c296ada67aaf6038d010023cbc90";

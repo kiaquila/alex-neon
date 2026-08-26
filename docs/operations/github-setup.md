@@ -3,13 +3,19 @@
 The repository ships its own guardrails in `.github/`; repository *settings*
 still need an owner with GitHub administration access.
 
-After the first green CI run:
+**Do the Codex step first.** `ai-review` runs from the first pull request and
+fails until the Codex application is installed *and* a review exists for that
+exact head, so there is no green run to wait for until it is configured:
 
-1. Confirm the repository is private unless its content is intentionally public.
-2. Keep `main` as the default branch and enable automatic head-branch deletion.
-3. Configure the Codex repository application, then request a review for the
+1. Install the Codex repository application, then request a review for the
    current full PR head SHA by commenting `@codex review <sha>`. The `ai-review`
-   job reads that review; it never posts one.
+   job reads that review; it never posts one. Every push needs a fresh request,
+   because the gate is tied to the head SHA rather than to the branch.
+
+Then, once CI is green:
+
+2. Confirm the repository is private unless its content is intentionally public.
+3. Keep `main` as the default branch and enable automatic head-branch deletion.
 4. When the repository plan supports it, protect `main` with pull requests,
    required Code Owner review, conversation resolution, no force pushes, no
    branch deletion, and stale-approval dismissal. Require the check names this

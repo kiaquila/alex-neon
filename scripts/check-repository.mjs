@@ -5,7 +5,7 @@
    to reason about what a write-capable job may safely execute. */
 
 import { basename, join, resolve, sep } from "node:path";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { parse as parseYaml } from "yaml";
 
@@ -109,6 +109,11 @@ export function checkWorkflowText(workflow, text) {
   for (const [id, job] of Object.entries(jobs)) {
     if (!isMapping(job)) continue;
     if ("permissions" in job) permissions.push([`jobs.${id}.permissions`, job.permissions]);
+    /* Read-only GITHUB_TOKEN permissions say nothing about repository or
+       organisation secrets, which `inherit` forwards wholesale to the callee. */
+    if (job.secrets === "inherit") {
+      failures.push(`Reusable-workflow job may not inherit secrets in ${workflow}: jobs.${id}.secrets`);
+    }
     /* A job-level `uses` is a reusable workflow, and needs the same pin. */
     if (typeof job.uses === "string") actions.push([`jobs.${id}.uses`, job.uses]);
     const steps = Array.isArray(job.steps) ? job.steps : [];
@@ -128,6 +133,39 @@ export function checkWorkflowText(workflow, text) {
     for (const action of actionFailures(where, uses)) {
       failures.push(`Action is not pinned to a full SHA in ${workflow}: ${action}`);
     }
+  }
+  return failures;
+}
+
+/* Files are read in chunks so that a large one is still scanned rather than
+   skipped: a padded export is exactly where a key would hide. Chunks overlap by
+   more than the longest pattern, so a secret straddling a boundary is still
+   seen. */
+const CHUNK_BYTES = 1 << 20;
+const OVERLAP_BYTES = 4096;
+
+export function scanFileText(path, normalized) {
+  const failures = [];
+  const handle = openSync(path, "r");
+  try {
+    const buffer = Buffer.allocUnsafe(CHUNK_BYTES);
+    let carry = "";
+    let position = 0;
+    for (let chunk = 0; ; chunk += 1) {
+      const read = readSync(handle, buffer, 0, CHUNK_BYTES, position);
+      if (read === 0) break;
+      position += read;
+      const bytes = buffer.subarray(0, read);
+      /* A NUL byte in the first block means binary; scanning it only produces
+         noise. Later chunks are not re-tested, so a text file stays text. */
+      if (chunk === 0 && bytes.subarray(0, Math.min(read, 8192)).includes(0)) break;
+      const text = carry + bytes.toString("utf8");
+      failures.push(...checkText(normalized, text));
+      carry = text.slice(-OVERLAP_BYTES);
+      if (read < CHUNK_BYTES) break;
+    }
+  } finally {
+    closeSync(handle);
   }
   return failures;
 }
@@ -158,16 +196,12 @@ export function scanRepository(root) {
       failures.push(`Symbolic links are not allowed: ${normalized}`);
       continue;
     }
-    if (!stat.isFile() || stat.size > 2_000_000) continue;
-    const buffer = readFileSync(path);
-    /* A NUL byte in the first block means binary; scanning it for secrets only
-       produces noise. */
-    if (buffer.subarray(0, Math.min(buffer.length, 8192)).includes(0)) continue;
-    const text = buffer.toString("utf8");
-    failures.push(...checkText(normalized, text));
-    if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(normalized)) {
-      failures.push(...checkWorkflowText(normalized, text));
-    }
+    if (!stat.isFile()) continue;
+    const workflowText = /^\.github\/workflows\/[^/]+\.ya?ml$/.test(normalized)
+      ? readFileSync(path, "utf8")
+      : null;
+    if (workflowText !== null) failures.push(...checkWorkflowText(normalized, workflowText));
+    failures.push(...scanFileText(path, normalized));
   }
   return { failures: [...new Set(failures)], files };
 }
