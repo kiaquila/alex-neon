@@ -50,27 +50,26 @@ export function checkText(normalized, text) {
 /* Workflows are parsed, not pattern-matched. YAML has too many ways to write
    the same mapping — flow style, quoted keys, anchors, a hash inside a quoted
    scalar — for a line-oriented reader to stay honest about what GitHub will
-   actually grant. Parsing is why this function is short. */
-function* walk(node, key = null) {
-  if (Array.isArray(node)) {
-    for (const item of node) yield* walk(item, key);
-    return;
-  }
-  if (node === null || typeof node !== "object") return;
-  for (const [childKey, value] of Object.entries(node)) {
-    yield [childKey, value];
-    yield* walk(value, childKey);
-  }
+   actually grant. Only the positions GitHub itself gives meaning to are read,
+   so a step input or a matrix dimension that happens to be named `permissions`
+   or `uses` is workflow data, not a grant or an action reference. */
+function isMapping(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function permissionFailures(grants) {
-  if (typeof grants === "string") return grants === "read-all" ? [] : [grants];
-  if (grants === null || typeof grants !== "object" || Array.isArray(grants)) {
-    return [JSON.stringify(grants)];
-  }
+function permissionFailures(where, grants) {
+  if (typeof grants === "string") return grants === "read-all" ? [] : [`${where}: ${grants}`];
+  if (!isMapping(grants)) return [`${where}: ${JSON.stringify(grants)}`];
   return Object.entries(grants)
     .filter(([, grant]) => !READ_ONLY_GRANTS.has(grant))
-    .map(([scope, grant]) => `${scope}: ${grant}`);
+    .map(([scope, grant]) => `${where}.${scope}: ${grant}`);
+}
+
+function actionFailures(where, uses) {
+  const action = String(uses);
+  if (action.startsWith("./") || action.startsWith("docker://")) return [];
+  const ref = action.slice(action.lastIndexOf("@") + 1);
+  return /^[a-f0-9]{40}$/.test(ref) ? [] : [`${where}: ${action}`];
 }
 
 export function checkWorkflowText(workflow, text) {
@@ -80,35 +79,54 @@ export function checkWorkflowText(workflow, text) {
   } catch (error) {
     return [`Workflow is not parseable YAML: ${workflow}: ${error.message}`];
   }
-  if (document === null || typeof document !== "object") {
-    return [`Workflow must be a YAML mapping: ${workflow}`];
-  }
+  if (!isMapping(document)) return [`Workflow must be a YAML mapping: ${workflow}`];
 
   const failures = [];
-  /* YAML 1.1 readers fold `on:` to `true`; the 1.2 core schema keeps it a
-     string. Accept either so the trigger is never silently unread. */
-  const triggers = document.on ?? document.true;
-  if (triggers === undefined) failures.push(`Workflow declares no triggers: ${workflow}`);
-  if (!("permissions" in document)) {
-    failures.push(`Workflow must declare top-level permissions: ${workflow}`);
-  }
+  const permissions = [];
+  const actions = [];
 
-  for (const [key, value] of walk(document)) {
-    if (key === "pull_request_target") {
+  /* GitHub recognises `on` and nothing else; the YAML 1.2 core schema this
+     parser uses keeps it a string rather than folding it to `true`. */
+  const triggers = document.on;
+  if (triggers === undefined) {
+    failures.push(`Workflow declares no on: triggers: ${workflow}`);
+  } else {
+    const names = isMapping(triggers)
+      ? Object.keys(triggers)
+      : [triggers].flat().map((trigger) => String(trigger));
+    if (names.includes("pull_request_target")) {
       failures.push(`High-risk pull_request_target trigger in ${workflow}`);
     }
-    if (key === "permissions") {
-      for (const grant of permissionFailures(value)) {
-        failures.push(`Workflow permissions must be read-only in ${workflow}: ${grant}`);
+  }
+
+  if (!("permissions" in document)) {
+    failures.push(`Workflow must declare top-level permissions: ${workflow}`);
+  } else {
+    permissions.push(["permissions", document.permissions]);
+  }
+
+  const jobs = isMapping(document.jobs) ? document.jobs : {};
+  for (const [id, job] of Object.entries(jobs)) {
+    if (!isMapping(job)) continue;
+    if ("permissions" in job) permissions.push([`jobs.${id}.permissions`, job.permissions]);
+    /* A job-level `uses` is a reusable workflow, and needs the same pin. */
+    if (typeof job.uses === "string") actions.push([`jobs.${id}.uses`, job.uses]);
+    const steps = Array.isArray(job.steps) ? job.steps : [];
+    for (const [index, step] of steps.entries()) {
+      if (isMapping(step) && typeof step.uses === "string") {
+        actions.push([`jobs.${id}.steps[${index}].uses`, step.uses]);
       }
     }
-    if (key === "uses") {
-      const action = String(value);
-      if (action.startsWith("./") || action.startsWith("docker://")) continue;
-      const ref = action.slice(action.lastIndexOf("@") + 1);
-      if (!/^[a-f0-9]{40}$/.test(ref)) {
-        failures.push(`Action is not pinned to a full SHA in ${workflow}: ${action}`);
-      }
+  }
+
+  for (const [where, grants] of permissions) {
+    for (const grant of permissionFailures(where, grants)) {
+      failures.push(`Workflow permissions must be read-only in ${workflow}: ${grant}`);
+    }
+  }
+  for (const [where, uses] of actions) {
+    for (const action of actionFailures(where, uses)) {
+      failures.push(`Action is not pinned to a full SHA in ${workflow}: ${action}`);
     }
   }
   return failures;

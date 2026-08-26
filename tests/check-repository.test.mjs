@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { checkText, checkTrackedPath, checkWorkflowText } from "../scripts/check-repository.mjs";
-import { evaluate } from "../scripts/check-codex-review.mjs";
+import { evaluate, headline } from "../scripts/check-codex-review.mjs";
 
 const WORKFLOW = ".github/workflows/ci.yml";
 const PINNED = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
@@ -53,7 +53,9 @@ test("no workflow may grant a write permission", () => {
   const scoped = checkWorkflowText(WORKFLOW, workflow(
     `jobs:\n  a:\n    permissions:\n      contents: read\n      checks: write\n    steps: []\n`
   ));
-  assert.deepEqual(scoped, ["Workflow permissions must be read-only in .github/workflows/ci.yml: checks: write"]);
+  assert.deepEqual(scoped, [
+    "Workflow permissions must be read-only in .github/workflows/ci.yml: jobs.a.permissions.checks: write"
+  ]);
 
   assert.ok(
     checkWorkflowText(WORKFLOW, `name: CI\non:\n  pull_request:\n\npermissions: write-all\njobs: {}\n`)
@@ -103,7 +105,7 @@ test("flow style and quoted keys cannot hide an unpinned action", () => {
   for (const text of cases) {
     assert.deepEqual(
       checkWorkflowText(WORKFLOW, text),
-      ["Action is not pinned to a full SHA in .github/workflows/ci.yml: actions/checkout@v4"],
+      ["Action is not pinned to a full SHA in .github/workflows/ci.yml: jobs.a.steps[0].uses: actions/checkout@v4"],
       `unpinned action slipped through:\n${text}`
     );
   }
@@ -133,6 +135,34 @@ test("actions must be pinned to a full commit SHA", () => {
   assert.deepEqual(checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    steps:\n      - uses: ./.github/x\n`)), []);
 });
 
+/* Reported by Codex review: walking every mapping made workflow *data* look
+   like a grant or an action reference. Only the positions GitHub gives meaning
+   to are read. */
+test("step inputs and matrix dimensions are data, not grants or actions", () => {
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(
+      `jobs:\n  a:\n    strategy:\n      matrix:\n        uses: [one, two]\n    steps:\n      - uses: ${PINNED}\n        with:\n          permissions: read\n          uses: not-an-action@v1\n`
+    )),
+    []
+  );
+});
+
+test("a reusable workflow called by a job needs the same pin", () => {
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    uses: owner/repo/.github/workflows/x.yml@v1\n`)),
+    ["Action is not pinned to a full SHA in .github/workflows/ci.yml: jobs.a.uses: owner/repo/.github/workflows/x.yml@v1"]
+  );
+});
+
+/* Reported by Codex review: GitHub recognises `on` and nothing else, so a
+   workflow whose trigger key was replaced never runs and must be reported. */
+test("only a real on: key counts as a trigger", () => {
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, `name: CI\n"true":\n  pull_request:\npermissions:\n  contents: read\njobs: {}\n`),
+    ["Workflow declares no on: triggers: .github/workflows/ci.yml"]
+  );
+});
+
 const HEAD = "f41182e430a9c296ada67aaf6038d010023cbc90";
 
 function pull({ commit = HEAD, threads = [] } = {}) {
@@ -146,6 +176,11 @@ function pull({ commit = HEAD, threads = [] } = {}) {
 test("the Codex gate wants a review of this exact head", () => {
   assert.equal(evaluate(pull(), HEAD).reviewed, true);
   assert.equal(evaluate(pull({ commit: "0".repeat(40) }), HEAD).reviewed, false);
+});
+
+test("a finding is reported by its title, not its badge markup", () => {
+  const body = "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange)</sub></sub>  Paginate all threads**\n\nDetail.";
+  assert.equal(headline(body), "Paginate all threads");
 });
 
 test("the Codex gate blocks on unresolved P0-P2 findings only", () => {
