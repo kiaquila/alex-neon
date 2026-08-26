@@ -46,6 +46,25 @@ export function checkText(normalized, text) {
   return failures;
 }
 
+/* Comments may contain the very words this guard counts, so drop them first.
+   Only used for counting keys, never for reading a value. */
+function withoutComments(text) {
+  return text.replace(/^[ \t]*#.*$/gm, "").replace(/[ \t]+#.*$/gm, "");
+}
+
+/* The guard reads workflows line by line instead of parsing YAML, which keeps it
+   dependency-free. Flow style — `permissions: { contents: write }`,
+   `steps: [{ uses: x@v4 }]` — hides a key from a line-oriented reader, so a key
+   that is not at the start of its own line is refused rather than skipped. */
+function refuseUnreadableStyle(workflow, text, key) {
+  const bare = withoutComments(text);
+  const total = [...bare.matchAll(new RegExp(`\\b${key}:`, "g"))].length;
+  const readable = [...bare.matchAll(new RegExp(`^\\s*-?\\s*${key}:`, "gm"))].length;
+  return total > readable
+    ? [`Inline or flow-style \`${key}:\` is unreadable to this guard in ${workflow}; use block style`]
+    : [];
+}
+
 export function checkWorkflowText(workflow, text) {
   const failures = [];
   if (/\bpull_request_target\b/.test(text)) {
@@ -55,8 +74,12 @@ export function checkWorkflowText(workflow, text) {
   if (!/^permissions:/m.test(text)) {
     failures.push(`Workflow must declare top-level permissions: ${workflow}`);
   }
-  /* Scalar form: `permissions: read-all`, `write-all`, or `{}`. */
-  for (const [, scalar] of text.matchAll(/^\s*permissions:[ \t]*["']?([A-Za-z-]+)["']?[ \t]*$/gm)) {
+  failures.push(...refuseUnreadableStyle(workflow, text, "permissions"));
+  failures.push(...refuseUnreadableStyle(workflow, text, "uses"));
+  /* Any value on the `permissions:` line itself. `read-all` is the only one that
+     grants nothing writable; `write-all`, an alias, and a flow mapping all fail. */
+  for (const [, raw] of withoutComments(text).matchAll(/^\s*permissions:[ \t]*(\S.*?)[ \t]*$/gm)) {
+    const scalar = raw.replace(/^["']|["']$/g, "");
     if (scalar !== "read-all") failures.push(`Workflow permissions must be read-only in ${workflow}: ${scalar}`);
   }
   /* Mapping form: every `scope: grant` under a `permissions:` block. */

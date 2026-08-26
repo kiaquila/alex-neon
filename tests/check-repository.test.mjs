@@ -74,6 +74,47 @@ test("permissions: none is accepted and read-all keeps its scalar form", () => {
   );
 });
 
+/* Both reported by Codex review: a line-oriented guard cannot see a key that
+   flow style has moved off the start of its line, so it must refuse the style
+   rather than silently pass the workflow. */
+test("flow-style permissions and steps are refused, not skipped", () => {
+  const flowPermissions = checkWorkflowText(
+    WORKFLOW,
+    `name: CI\non:\n  pull_request:\n\npermissions: { contents: write }\njobs: {}\n`
+  );
+  assert.ok(flowPermissions.some((failure) => /must be read-only/.test(failure)));
+
+  const nestedPermissions = checkWorkflowText(
+    WORKFLOW,
+    workflow(`jobs:\n  a:\n    permissions: { checks: write }\n    steps: []\n`)
+  );
+  assert.ok(nestedPermissions.some((failure) => /must be read-only/.test(failure)));
+
+  const flowSteps = checkWorkflowText(
+    WORKFLOW,
+    workflow(`jobs:\n  a:\n    steps: [{ uses: actions/checkout@v4 }]\n`)
+  );
+  assert.deepEqual(flowSteps, [
+    "Inline or flow-style `uses:` is unreadable to this guard in .github/workflows/ci.yml; use block style"
+  ]);
+
+  const anchored = checkWorkflowText(
+    WORKFLOW,
+    `name: CI\non:\n  pull_request:\n\npermissions: *grants\njobs: {}\n`
+  );
+  assert.ok(anchored.some((failure) => /must be read-only/.test(failure)));
+});
+
+/* The words this guard counts also appear in the comments explaining them. */
+test("comments do not trip the flow-style refusal", () => {
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(
+      `jobs:\n  a:\n    # permissions: none needed here\n    steps:\n      - uses: ${PINNED} # uses: pinned\n`
+    )),
+    []
+  );
+});
+
 test("actions must be pinned to a full commit SHA", () => {
   assert.deepEqual(checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    steps:\n      - uses: ${PINNED}\n`)), []);
   assert.match(
