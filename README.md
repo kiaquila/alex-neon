@@ -4,9 +4,9 @@
 индивидуальных занятиях по практической работе с ИИ.
 
 - Оригинал: <https://codex-po-delu-alex.alexgoodmanalexgoodm.chatgpt.site/>
-- Стенд: `https://alex-neon.ks-design.workers.dev` (Worker уже существует;
-  переключение сборок на этот репозиторий — одноразовый шаг владельца аккаунта,
-  см. [«Cloudflare-стенд»](#cloudflare-стенд))
+- Стенд: `https://alex-neon.ks-design.workers.dev` (Worker существует, но
+  Git-интеграция Cloudflare сейчас отключена — ни один репозиторий его не
+  собирает, см. [«Cloudflare-стенд»](#cloudflare-стенд))
 
 ## Deliverable
 
@@ -49,6 +49,8 @@
 - [`CONTENT-AUDIT.md`](./CONTENT-AUDIT.md) — канонический контент, провенанс,
   осознанные отклонения.
 - [`AGENTS.md`](./AGENTS.md) — правила реализации и проверки.
+- [`docs/standards.md`](./docs/standards.md) — стандарты проекта: структура,
+  контент, безопасность, тестирование, ревью, деплой.
 - [`docs/migration/source-provenance.md`](./docs/migration/source-provenance.md)
   — откуда взялся этот репозиторий и чем это доказано.
 - `website/src/styles/tokens.css` — токены дизайн-системы; слои `base`,
@@ -79,36 +81,26 @@
 
 ## Cloudflare-стенд
 
-Стенд — существующий Worker `alex-neon` в аккаунте владельца. Имя воркера,
-домен, идентификаторы аккаунта и токены остаются project-owned: в этом
-репозитории лежит только `website/wrangler.json`, ни одного секрета здесь нет.
-
-| Настройка | Значение |
-| --- | --- |
-| Worker | `alex-neon` |
-| Репозиторий сборок | `kiaquila/alex-neon` (после переключения) |
-| Production branch | `main` |
-| Root directory | `website` |
-| Build command | `npm run build` |
-| Production deploy command | `npm run stage:deploy` |
-| Non-production deploy command | `npm run stage:preview` |
+**Git-интеграция Cloudflare сейчас отключена.** Worker `alex-neon` существует в
+аккаунте владельца, но его не собирает ни этот репозиторий, ни какой-либо
+другой. Здесь нет ни одного секрета Cloudflare и ни одного deploy-workflow: CI
+работает с правами `contents: read`. Подключение — отдельное осознанное решение
+владельца аккаунта, а не часть изменений кода.
 
 Лендинг статический: Cloudflare отдаёт его через Workers Static Assets из
 `website/dist`, а `website/worker/index.ts` нужен только чтобы навесить
 security-заголовки, которых нет у asset-пайплайна. `compatibility_date`
-зафиксирована; `workers_dev` и `preview_urls` включены.
+зафиксирована.
 
-Порядок переключения и откат описаны в
-[`docs/operations/cloudflare.md`](./docs/operations/cloudflare.md). Пока
-переключения не было, тот же Worker собирается из `kiaquila/web-design`, и два
+Целевые настройки сборки, порядок подключения и откат описаны в
+[`docs/operations/cloudflare.md`](./docs/operations/cloudflare.md). Два
 репозитория не должны одновременно деплоить одну цель.
 
 ## Открытые вопросы
 
-- Переключение сборок Worker'а `alex-neon` с `kiaquila/web-design` на этот
-  репозиторий — одноразовый шаг владельца аккаунта, см.
-  [«Cloudflare-стенд»](#cloudflare-стенд). До него стенд продолжает собираться
-  из монорепозитория.
+- Подключение Git-интеграции Cloudflare для Worker'а `alex-neon` — одноразовый
+  шаг владельца аккаунта, см. [«Cloudflare-стенд»](#cloudflare-стенд). Пока она
+  отключена, стенд не пересобирается автоматически.
 - Индексация стенда: сейчас `robots.txt` разрешает обход (как у других
   проектов); если оригинал остаётся боевым, возможно, стоит закрыть стенд от
   индексации, чтобы не создавать дубль. Решение за заказчиком.
@@ -119,13 +111,13 @@ security-заголовки, которых нет у asset-пайплайна. 
 Из корня репозитория:
 
 ```bash
-npm run preflight        # политика репозитория + дрейф managed-файлов + тесты baseline
-npm run project:check    # то, что настроено в .web-design/project.json
+npm run preflight   # guard репозитория + его тесты + сборка и тесты сайта
 ```
 
-`npm run project:check` запускает `npm run check --prefix website` — сборку и
-тесты сайта. В CI то же самое делает проверка `project-ci`; `project-check` —
-имя команды внутри `.web-design/project.json`.
+`preflight` — это `npm run check && npm test && npm --prefix website run check`.
+В CI то же самое делают задачи `repository-safety` и `website` единственного
+workflow [`.github/workflows/ci.yml`](./.github/workflows/ci.yml); рядом с ними
+идут `osv-scan` и `ai-review`.
 
 Локальный просмотр: `npm --prefix website run dev`
 (<http://localhost:4600>).

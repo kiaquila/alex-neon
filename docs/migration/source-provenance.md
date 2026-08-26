@@ -68,8 +68,9 @@ adaptation was committed.
   `misha` never entered this history. The filter kept a single path.
 - **Monorepository-only infrastructure.** `.repo-guard.json`, the multi-project
   `ci.yml`, `docs/stage-hosting.md`, the Cloudflare stage-registration workflow
-  and script, and the KS production-deploy workflow describe a workspace that
-  no longer exists here; the `web-design` baseline replaces them.
+  and script, and the KS production-deploy workflow describe a workspace that no
+  longer exists here. This repository's own small `.github/` and `scripts/`
+  replace them.
 - **Third-party notices for other projects.** `third-party-notices.md` keeps
   only the fonts and marks this project actually ships.
 
@@ -96,72 +97,58 @@ Only path topology was adapted. No business fact, price, translation, contact
 detail, approved sentence, or design decision was changed, and the Alex Neon
 concept is untouched.
 
-- `README.md` and `AGENTS.md`: `npm --prefix alex-neon/website run check` and
-  `node scripts/check-repository.mjs` became `npm run project:check` and
+- `README.md` and `AGENTS.md`: `npm --prefix alex-neon/website run check` plus a
+  separate `node scripts/check-repository.mjs` became the single
   `npm run preflight`; `npm --prefix alex-neon/website run og|dev` lost the
   directory prefix; `../CONTENT-AUDIT.md` became `./CONTENT-AUDIT.md`.
-- The two links to the monorepository's `docs/stage-hosting.md` now point at a
-  **Cloudflare-стенд** section in this repository's `README.md`, which carries
-  the Worker's build settings. The `static-cloudflare` profile keeps Worker
-  names, domains and account identifiers project-owned, so they belong here
-  rather than in the baseline.
+- The two links to the monorepository's `docs/stage-hosting.md` now point at
+  [`../operations/cloudflare.md`](../operations/cloudflare.md), which carries the
+  Worker's target build settings. Worker names, domains and account identifiers
+  are project-owned, so they belong here.
 - `AGENTS.md` gained a short **Базовые стандарты** section pointing at
-  `docs/standards/` and `.web-design/project.json`, because the baseline's own
-  `AGENTS.md` — which normally carries that pointer — was not installed over the
-  project's approved instructions.
+  [`../standards.md`](../standards.md), which is this repository's own
+  consolidated standards document.
 - The comments in `website/tests/site.test.mjs` that reference
   `../../CONTENT-AUDIT.md` and `../../third-party-notices.md` still resolve:
   both files sit at this repository's root, exactly where those relative paths
   land from `website/tests/`.
 
-## Baseline pin — provisional
+## No upstream baseline
 
-`.web-design/lock.json` pins
-`6e0050b035ba2f7bd7584fade4a028278e06e779` from the `codex/web-design-template-v2`
-branch of `kiaquila/web-design`, at version `0.1.0-dev`.
+Alex Neon is **not** a `kiaquila/web-design` consumer. An earlier revision of
+this pull request installed that project's control plane — a release manifest,
+a lock, a managed-file list, profiles, sync/bootstrap/update scripts, and the
+workflows that verify them — and pinned a prerelease baseline commit. All of it
+was removed before merge, and none of it is coming back.
 
-**This is deliberately a provisional pin.** `kiaquila/web-design` has not yet
-published an immutable stable release, because the pull request that turns it
-into a template — [`kiaquila/web-design#46`](https://github.com/kiaquila/web-design/pull/46)
-— is still a draft and must not be merged until every project has been migrated
-and verified. `6e0050b0` is the exact, reachable commit that pull request
-proposes, so it is a real 40-character SHA that `baseline-source-verification`
-can download and compare, and the standard `npm run setup` adoption path
-accepted it without any workaround.
+What survives is a small, project-owned harness that was written by hand from
+the ideas in `kiaquila/web-design@ea8501fdb90236fcb891e97b15f7a42a62f76ff1`:
 
-### What this pin released to the project
+| File | What it is |
+| --- | --- |
+| `scripts/check-repository.mjs` | Tracked-file hygiene, secret and personal-path scanning, and workflow rules |
+| `scripts/check-codex-review.mjs` | Read-only check that Codex reviewed the current head with no open P0-P2 |
+| `tests/check-repository.test.mjs` | Regression tests for both |
+| `.github/workflows/ci.yml` | One read-only workflow: website, repository safety, OSV, AI review |
 
-Two project-owned files changed with this pin, and neither is a baseline edit:
+That is a one-time transfer of ideas, not a dependency. There is no lock, no
+manifest, no managed path, no sync command, and no upstream SHA to advance.
+These files are edited here like any other project file, in a normal pull
+request, and the guard's rules are deliberately narrower than the baseline's
+because this repository grants no workflow write access at all — see
+[`../standards.md`](../standards.md).
 
-- `.github/CODEOWNERS` left the managed manifest. It is required of every
-  repository built from the template but its owners are per-project, so the
-  baseline hands the file over rather than keeping its bytes locked. The
-  content here is unchanged; from now on this repository owns it.
-- `.web-design/project.json` states the product check as
-  `npm run check --prefix website`. The repository guard reads the word after
-  the tool to decide what a check actually runs, so an option may not sit
-  ahead of the verb; `npm --prefix website run check` is the same run written
-  in the order the guard cannot read. `README.md` quotes the new form.
+## The old source path
 
-### Required follow-up
+`alex-neon/` still exists in `kiaquila/web-design`. Do not remove it until this
+repository's history, files, settings, checks, and — if it is ever reconnected —
+its deployment have been independently verified. Removing the source is the last
+step of the migration, not part of it.
 
-After `kiaquila/web-design#46` is merged and the first immutable stable release
-is published, this project must be moved onto that release's full commit SHA in
-its own separate pull request:
+## Cloudflare — not connected
 
-```bash
-npm run sync:web-design -- plan  --source-ref <stable-release-sha> --version <x.y.z>
-npm run sync:web-design -- apply --source-ref <stable-release-sha> --version <x.y.z>
-```
-
-Until that pull request is merged, this repository is pinned to a prerelease
-baseline and `0.1.0-dev` must not be treated as a released version.
-
-## Cloudflare — prepared, not switched
-
-Nothing in Cloudflare was changed during this migration. The Worker `alex-neon`
-still builds from `kiaquila/web-design`. The target settings and the
-rollback-safe cutover order are in `README.md` and
-[`../operations/cloudflare.md`](../operations/cloudflare.md). Until the cutover
-happens, the source directory in the monorepository must stay in place, and the
-two repositories must never both deploy this Worker.
+Nothing in Cloudflare was changed during this migration, and the Git build
+integration is currently disabled: no repository builds the `alex-neon` Worker.
+This repository holds no Cloudflare credential and no deploy workflow. The
+target settings and the rollback-safe order, should the integration be
+re-enabled, are in [`../operations/cloudflare.md`](../operations/cloudflare.md).

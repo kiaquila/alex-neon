@@ -1,7 +1,5 @@
-# Shared baseline trust boundary. Enable required Code Owner review in the ruleset.
+# Enable required Code Owner review in the ruleset so these paths need approval.
 /.github/ @kiaquila
-/.web-design/ @kiaquila
-/docs/operations/ @kiaquila
-/docs/standards/ @kiaquila
+/docs/ @kiaquila
 /scripts/ @kiaquila
 /tests/ @kiaquila

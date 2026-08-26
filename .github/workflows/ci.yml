@@ -1,19 +1,26 @@
-name: Project CI
+name: CI
 
 on:
   pull_request:
   push:
     branches:
       - main
+  schedule:
+    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  project-ci:
-    name: project-ci
+  website:
+    name: website
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -23,25 +30,63 @@ jobs:
         with:
           node-version: "22.18.0"
 
-      - name: Install npm dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          declare -A installed=()
-          while IFS= read -r -d '' lockfile; do
-            directory="$(dirname "$lockfile")"
-            if [ -n "${installed[$directory]:-}" ]; then
-              continue
-            fi
-            installed["$directory"]=1
-            npm ci --prefix "$directory"
-          done < <(
-            find . -type f \
-              \( -name package-lock.json -o -name npm-shrinkwrap.json \) \
-              -not -path './.git/*' \
-              -not -path '*/node_modules/*' \
-              -print0
-          )
+      - name: Install locked website dependencies
+        run: npm ci --prefix website --ignore-scripts
 
-      - name: Run project checks
-        run: node scripts/run-project-checks.mjs
+      - name: Build and test the website
+        run: npm --prefix website run check
+
+  repository-safety:
+    name: repository-safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.18.0"
+
+      - name: Run the repository guard and its tests
+        run: npm run check && npm test
+
+  osv-scan:
+    name: osv-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Scan dependencies
+        uses: google/osv-scanner-action/osv-scanner-action@8deb546fdb875b9996d27d4950be7312dac076a1 # v2.5.0
+        with:
+          scan-args: |-
+            --recursive
+            .
+
+  ai-review:
+    name: ai-review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.18.0"
+
+      - name: Require a Codex review of the current head
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CODEX_REVIEW_PR_NUMBER: ${{ github.event.pull_request.number }}
+          CODEX_REVIEW_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/check-codex-review.mjs
