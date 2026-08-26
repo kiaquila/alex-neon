@@ -4,9 +4,9 @@
 индивидуальных занятиях по практической работе с ИИ.
 
 - Оригинал: <https://codex-po-delu-alex.alexgoodmanalexgoodm.chatgpt.site/>
-- Стенд: `https://alex-neon.ks-design.workers.dev` (после одноразового
-  подключения Worker'а владельцем аккаунта — см.
-  [`docs/stage-hosting.md`](../docs/stage-hosting.md))
+- Стенд: `https://alex-neon.ks-design.workers.dev` (Worker существует, но
+  Git-интеграция Cloudflare сейчас отключена — ни один репозиторий его не
+  собирает, см. [«Cloudflare-стенд»](#cloudflare-стенд))
 
 ## Deliverable
 
@@ -49,6 +49,10 @@
 - [`CONTENT-AUDIT.md`](./CONTENT-AUDIT.md) — канонический контент, провенанс,
   осознанные отклонения.
 - [`AGENTS.md`](./AGENTS.md) — правила реализации и проверки.
+- [`docs/standards.md`](./docs/standards.md) — стандарты проекта: структура,
+  контент, безопасность, тестирование, ревью, деплой.
+- [`docs/migration/source-provenance.md`](./docs/migration/source-provenance.md)
+  — откуда взялся этот репозиторий и чем это доказано.
 - `website/src/styles/tokens.css` — токены дизайн-системы; слои `base`,
   `layout`, `components`, `sections` собираются поверх них в этом порядке.
 
@@ -61,7 +65,7 @@
 - Никаких сетевых зависимостей: шрифты и статика только со своего origin,
   без аналитики и трекеров (как и в оригинале).
 - `assets/og.png` не хранится «как есть»: он воспроизводимо генерируется
-  `npm --prefix alex-neon/website run og` — тем же генератором поля
+  `npm --prefix website run og` — тем же генератором поля
   (`src/js/field.js`), что и hero, на чистом Node без шрифтов и внешних
   библиотек. Поэтому карточка не расходится с страницей.
 - Логотип Telegram-сообщества хостится локально
@@ -75,10 +79,28 @@
   в gzip; вторичный потолок в 48 КБ без сжатия защищает от случайного
   раздувания. Оба ограничения проверяются тестом.
 
+## Cloudflare-стенд
+
+**Git-интеграция Cloudflare сейчас отключена.** Worker `alex-neon` существует в
+аккаунте владельца, но его не собирает ни этот репозиторий, ни какой-либо
+другой. Здесь нет ни одного секрета Cloudflare и ни одного deploy-workflow: CI
+работает с правами `contents: read`. Подключение — отдельное осознанное решение
+владельца аккаунта, а не часть изменений кода.
+
+Лендинг статический: Cloudflare отдаёт его через Workers Static Assets из
+`website/dist`, а `website/worker/index.ts` нужен только чтобы навесить
+security-заголовки, которых нет у asset-пайплайна. `compatibility_date`
+зафиксирована.
+
+Целевые настройки сборки, порядок подключения и откат описаны в
+[`docs/operations/cloudflare.md`](./docs/operations/cloudflare.md). Два
+репозитория не должны одновременно деплоить одну цель.
+
 ## Открытые вопросы
 
-- Подключение Cloudflare Worker `alex-neon` — одноразовый шаг владельца
-  аккаунта по [`docs/stage-hosting.md`](../docs/stage-hosting.md).
+- Подключение Git-интеграции Cloudflare для Worker'а `alex-neon` — одноразовый
+  шаг владельца аккаунта, см. [«Cloudflare-стенд»](#cloudflare-стенд). Пока она
+  отключена, стенд не пересобирается автоматически.
 - Индексация стенда: сейчас `robots.txt` разрешает обход (как у других
   проектов); если оригинал остаётся боевым, возможно, стоит закрыть стенд от
   индексации, чтобы не создавать дубль. Решение за заказчиком.
@@ -89,11 +111,15 @@
 Из корня репозитория:
 
 ```bash
-node scripts/check-repository.mjs
-npm --prefix alex-neon/website run check
+npm run preflight   # guard репозитория + его тесты + сборка и тесты сайта
 ```
 
-Локальный просмотр: `npm --prefix alex-neon/website run dev`
+`preflight` — это `npm run check && npm test && npm --prefix website run check`.
+В CI то же самое делают задачи `repository-safety` и `website` единственного
+workflow [`.github/workflows/ci.yml`](./.github/workflows/ci.yml); рядом с ними
+идут `osv-scan` и `ai-review`.
+
+Локальный просмотр: `npm --prefix website run dev`
 (<http://localhost:4600>).
 
 Для визуальных изменений дополнительно проверять 360 px и 1280 px+, состояние

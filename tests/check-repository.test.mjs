@@ -1,0 +1,359 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
+import { join } from "node:path";
+
+import {
+  checkActionManifestText,
+  checkText,
+  checkTrackedPath,
+  checkWorkflowText,
+  scanFileText,
+  scanRepository
+} from "../scripts/check-repository.mjs";
+import { commentReviews, evaluate, headline } from "../scripts/check-codex-review.mjs";
+
+const WORKFLOW = ".github/workflows/ci.yml";
+const PINNED = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
+
+function workflow(body) {
+  return `name: CI\non:\n  pull_request:\n\npermissions:\n  contents: read\n\n${body}`;
+}
+
+test("tracked build output and dependency trees are rejected", () => {
+  assert.deepEqual(checkTrackedPath("website/src/index.html"), []);
+  assert.match(checkTrackedPath("website/dist/index.html")[0], /Generated or dependency directory/);
+  assert.match(checkTrackedPath("node_modules/x/index.js")[0], /Generated or dependency directory/);
+});
+
+test("local-only and secret-bearing filenames are rejected, .env.example is not", () => {
+  assert.deepEqual(checkTrackedPath("website/.env.example"), []);
+  assert.match(checkTrackedPath(".env.local")[0], /Sensitive or local-only file/);
+  assert.match(checkTrackedPath("deploy/server.pem")[0], /Sensitive or local-only file/);
+});
+
+/* Both fixtures are assembled at run time on purpose: spelled out literally,
+   they would be real matches, and the guard would flag this very file. */
+test("secrets and personal absolute paths are found in file text", () => {
+  const awsKey = `AKIA${"0123456789ABCDEF"}`;
+  const homePath = `/User${"s"}/someone/projects/x`;
+  assert.deepEqual(checkText("a.md", "nothing to see"), []);
+  assert.match(checkText("a.md", awsKey)[0], /Possible AWS access key/);
+  /* STS temporary keys are equally sensitive and share the suffix shape. */
+  assert.match(checkText("a.md", `ASIA${"0123456789ABCDEF"}`)[0], /Possible AWS access key/);
+  assert.match(checkText("a.md", `github_pat_${"A".repeat(30)}`)[0], /Possible GitHub fine-grained token/);
+  assert.match(checkText("a.md", `see ${homePath}`)[0], /Personal absolute path/);
+});
+
+test("workflows must declare top-level permissions and avoid pull_request_target", () => {
+  assert.deepEqual(checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    steps:\n      - uses: ${PINNED}\n`)), []);
+  assert.match(
+    checkWorkflowText(WORKFLOW, `name: CI\non:\n  pull_request:\njobs: {}\n`)[0],
+    /must declare top-level permissions/
+  );
+  assert.ok(
+    checkWorkflowText(
+      WORKFLOW,
+      `name: CI\non:\n  pull_request_target:\n\npermissions:\n  contents: read\njobs: {}\n`
+    ).some((failure) => /pull_request_target/.test(failure))
+  );
+});
+
+/* The repository has no write-capable job, and the guard exists to keep it that
+   way: a write grant anywhere in a workflow is a failure, in either YAML form. */
+test("no workflow may grant a write permission", () => {
+  const scoped = checkWorkflowText(WORKFLOW, workflow(
+    `jobs:\n  a:\n    permissions:\n      contents: read\n      checks: write\n    steps: []\n`
+  ));
+  assert.deepEqual(scoped, [
+    "Workflow permissions must be read-only in .github/workflows/ci.yml: jobs.a.permissions.checks: write"
+  ]);
+
+  assert.ok(
+    checkWorkflowText(WORKFLOW, `name: CI\non:\n  pull_request:\n\npermissions: write-all\njobs: {}\n`)
+      .some((failure) => /must be read-only/.test(failure))
+  );
+  assert.ok(
+    checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    permissions:\n      id-token: write\n    steps: []\n`))
+      .some((failure) => /id-token: write/.test(failure))
+  );
+});
+
+test("permissions: none is accepted and read-all keeps its scalar form", () => {
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    permissions:\n      contents: none\n    steps: []\n`)),
+    []
+  );
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, `name: CI\non:\n  pull_request:\n\npermissions: read-all\njobs: {}\n`),
+    []
+  );
+});
+
+/* Four rounds of Codex review, all the same shape: a way to write YAML that a
+   line-oriented reader misses. The guard parses the document now, so each of
+   these is read as the mapping GitHub will act on. */
+test("flow style, quoted keys, and anchors cannot hide a write grant", () => {
+  const cases = [
+    `name: CI\non:\n  pull_request:\npermissions: { contents: write }\njobs: {}\n`,
+    workflow(`jobs:\n  a:\n    permissions: { checks: write }\n    steps: []\n`),
+    `name: CI\non:\n  pull_request:\npermissions: read-all\njobs:\n  a:\n    "permissions": { contents: write }\n    steps: []\n`,
+    `name: CI\non:\n  pull_request:\npermissions: &grants\n  contents: write\njobs:\n  a:\n    permissions: *grants\n    steps: []\n`
+  ];
+  for (const text of cases) {
+    assert.ok(
+      checkWorkflowText(WORKFLOW, text).some((failure) => /must be read-only/.test(failure)),
+      `write grant slipped through:\n${text}`
+    );
+  }
+});
+
+test("flow style and quoted keys cannot hide an unpinned action", () => {
+  const cases = [
+    workflow(`jobs:\n  a:\n    steps: [{ uses: actions/checkout@v4 }]\n`),
+    workflow(`jobs:\n  a:\n    steps:\n      - "uses": actions/checkout@v4\n`),
+    workflow(`jobs:\n  a:\n    steps: [{ name: "audit # note", uses: actions/checkout@v4 }]\n`)
+  ];
+  for (const text of cases) {
+    assert.deepEqual(
+      checkWorkflowText(WORKFLOW, text),
+      ["Action is not pinned to a full SHA in .github/workflows/ci.yml: jobs.a.steps[0].uses: actions/checkout@v4"],
+      `unpinned action slipped through:\n${text}`
+    );
+  }
+});
+
+/* A hash inside a quoted scalar is content, not a comment; a real comment is. */
+test("quoted hashes are content and comments are still comments", () => {
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(
+      `jobs:\n  a:\n    # permissions: none needed here\n    steps:\n      - name: "audit # note"\n        uses: ${PINNED} # v7.0.1\n`
+    )),
+    []
+  );
+});
+
+test("a workflow that cannot be parsed fails closed", () => {
+  assert.match(checkWorkflowText(WORKFLOW, "permissions: [unclosed\n")[0], /not parseable YAML/);
+  assert.match(checkWorkflowText(WORKFLOW, "just a string\n")[0], /must be a YAML mapping/);
+});
+
+test("actions must be pinned to a full commit SHA", () => {
+  assert.deepEqual(checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    steps:\n      - uses: ${PINNED}\n`)), []);
+  assert.match(
+    checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n`))[0],
+    /not pinned to a full SHA/
+  );
+  assert.deepEqual(checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    steps:\n      - uses: ./.github/x\n`)), []);
+});
+
+/* Reported by Codex review: a container action is not reviewed with the
+   repository, and a tag can be moved under it. */
+test("a docker action needs an immutable digest", () => {
+  const digest = `docker://owner/image@sha256:${"a".repeat(64)}`;
+  assert.deepEqual(checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    steps:\n      - uses: ${digest}\n`)), []);
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    steps:\n      - uses: docker://owner/image:latest\n`)),
+    ["Action is not pinned to a full SHA in .github/workflows/ci.yml: jobs.a.steps[0].uses: docker://owner/image:latest"]
+  );
+});
+
+/* Reported by Codex review: walking every mapping made workflow *data* look
+   like a grant or an action reference. Only the positions GitHub gives meaning
+   to are read. */
+test("step inputs and matrix dimensions are data, not grants or actions", () => {
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(
+      `jobs:\n  a:\n    strategy:\n      matrix:\n        uses: [one, two]\n    steps:\n      - uses: ${PINNED}\n        with:\n          permissions: read\n          uses: not-an-action@v1\n`
+    )),
+    []
+  );
+});
+
+test("a reusable workflow called by a job needs the same pin", () => {
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    uses: owner/repo/.github/workflows/x.yml@v1\n`)),
+    ["Action is not pinned to a full SHA in .github/workflows/ci.yml: jobs.a.uses: owner/repo/.github/workflows/x.yml@v1"]
+  );
+});
+
+/* Reported by Codex review: GitHub recognises `on` and nothing else, so a
+   workflow whose trigger key was replaced never runs and must be reported. */
+test("only a real, non-empty on: key counts as a trigger", () => {
+  const missing = ["Workflow declares no on: triggers: .github/workflows/ci.yml"];
+  const head = 'name: CI\npermissions:\n  contents: read\njobs: {}\n';
+  /* A replaced key, and the three shapes that parse but name no event. */
+  for (const triggers of ['"true":\n  pull_request:', "on:", "on: []", "on: {}"]) {
+    assert.deepEqual(checkWorkflowText(WORKFLOW, `${triggers}\n${head}`), missing, `accepted: ${triggers}`);
+  }
+  assert.deepEqual(checkWorkflowText(WORKFLOW, `on: push\n${head}`), []);
+  assert.deepEqual(checkWorkflowText(WORKFLOW, `on: [push, pull_request]\n${head}`), []);
+});
+
+/* Reported by Codex review: `existsSync` follows a link, so a dangling symlink
+   used to look absent and skip the symlink rule entirely. */
+test("a dangling symlink is still reported", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "guard-"));
+  try {
+    await writeFile(join(directory, ".gitignore"), "");
+    await writeFile(join(directory, "kept.txt"), "fine\n");
+    await symlink("nowhere.txt", join(directory, "dangling.txt"));
+    execFileSync("git", ["init", "-q"], { cwd: directory });
+
+    const { failures } = scanRepository(directory);
+    assert.deepEqual(
+      failures.filter((failure) => /Symbolic links/.test(failure)),
+      ["Symbolic links are not allowed: dangling.txt"]
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+/* Reported by Codex review: read-only `GITHUB_TOKEN` permissions say nothing
+   about the repository and organisation secrets `inherit` forwards. */
+test("a reusable-workflow job may not inherit secrets", () => {
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(
+      `jobs:\n  a:\n    uses: owner/repo/.github/workflows/x.yml@${"a".repeat(40)}\n    secrets: inherit\n`
+    )),
+    ["Reusable-workflow job may not inherit secrets in .github/workflows/ci.yml: jobs.a.secrets"]
+  );
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(
+      `jobs:\n  a:\n    uses: owner/repo/.github/workflows/x.yml@${"a".repeat(40)}\n    secrets:\n      token: \${{ secrets.ONE }}\n`
+    )),
+    []
+  );
+});
+
+/* Reported by Codex review: a large file used to be skipped outright, which is
+   exactly where a key would hide. */
+test("a secret is found in a large file, and across a chunk boundary", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "guard-"));
+  try {
+    const key = `AKIA${"0123456789ABCDEF"}`;
+    const big = join(directory, "big.json");
+    await writeFile(big, `${"x".repeat(3_000_000)}${key}\n`);
+    assert.match(scanFileText(big, "big.json")[0], /Possible AWS access key/);
+
+    /* Straddle the 1 MiB chunk boundary so the overlap window is what catches it. */
+    const split = join(directory, "split.txt");
+    await writeFile(split, `${"x".repeat((1 << 20) - 8)}${key}\n`);
+    assert.match(scanFileText(split, "split.txt")[0], /Possible AWS access key/);
+
+    const clean = join(directory, "clean.txt");
+    await writeFile(clean, "x".repeat(3_000_000));
+    assert.deepEqual(scanFileText(clean, "clean.txt"), []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+/* Reported by Codex review: `./` is exempt from pinning because it is reviewed
+   here — so what it calls must be checked too, or it is a bypass. */
+test("a local composite action cannot smuggle in an unpinned action", () => {
+  const MANIFEST = ".github/actions/check/action.yml";
+  assert.deepEqual(
+    checkActionManifestText(MANIFEST, `name: check\nruns:\n  using: composite\n  steps:\n    - uses: ${PINNED}\n`),
+    []
+  );
+  assert.deepEqual(
+    checkActionManifestText(MANIFEST, "name: check\nruns:\n  using: composite\n  steps:\n    - uses: actions/setup-node@v7\n"),
+    [`Action is not pinned to a full SHA in ${MANIFEST}: runs.steps[0].uses: actions/setup-node@v7`]
+  );
+  /* A manifest with no steps at all is not a finding. */
+  assert.deepEqual(checkActionManifestText(MANIFEST, "name: check\nruns:\n  using: node20\n  main: index.js\n"), []);
+
+  /* A Docker action names its own image, and the same digest rule applies. */
+  assert.deepEqual(
+    checkActionManifestText(MANIFEST, "name: check\nruns:\n  using: docker\n  image: Dockerfile\n"),
+    []
+  );
+  assert.deepEqual(
+    checkActionManifestText(MANIFEST, `name: check\nruns:\n  using: docker\n  image: docker://owner/image@sha256:${"a".repeat(64)}\n`),
+    []
+  );
+  assert.deepEqual(
+    checkActionManifestText(MANIFEST, "name: check\nruns:\n  using: docker\n  image: docker://owner/image:latest\n"),
+    [`Action is not pinned to a full SHA in ${MANIFEST}: runs.image: docker://owner/image:latest`]
+  );
+  assert.match(checkActionManifestText(MANIFEST, "runs: [unclosed\n")[0], /not parseable YAML/);
+});
+
+/* Reported by Codex review: a contractual check whose failure is swallowed is
+   green and meaningless, which is the same hole as replacing it with `true`. */
+test("a job or step may not ignore its own failure", () => {
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(
+      `jobs:\n  a:\n    continue-on-error: true\n    steps:\n      - uses: ${PINNED}\n`
+    )),
+    ["A failure must not be ignored in .github/workflows/ci.yml: jobs.a.continue-on-error"]
+  );
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(
+      `jobs:\n  a:\n    steps:\n      - run: npm test\n        continue-on-error: \${{ github.event_name == 'push' }}\n`
+    )),
+    ["A failure must not be ignored in .github/workflows/ci.yml: jobs.a.steps[0].continue-on-error"]
+  );
+  /* Explicitly false is the default written out, and is not a finding. */
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    continue-on-error: false\n    steps:\n      - run: npm test\n`)),
+    []
+  );
+});
+
+const HEAD = "f41182e430a9c296ada67aaf6038d010023cbc90";
+
+function pull({ commit = HEAD, threads = [], comments = [] } = {}) {
+  return {
+    headRefOid: HEAD,
+    reviews: { nodes: [{ author: { login: "chatgpt-codex-connector" }, commit: { oid: commit } }] },
+    reviewThreads: { nodes: threads },
+    comments: { nodes: comments }
+  };
+}
+
+/* A clean Codex verdict arrives as a comment naming an abbreviated commit, not
+   as a review object, so the gate must accept that form too. */
+test("a clean verdict posted as a comment counts as a review of this head", () => {
+  const clean = [{
+    author: { login: "chatgpt-codex-connector[bot]" },
+    body: `Codex Review: Didn't find any major issues. Nice work!\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``
+  }];
+  const other = [{
+    author: { login: "chatgpt-codex-connector[bot]" },
+    body: "Codex Review: fine.\n\n**Reviewed commit:** `0123456789`"
+  }];
+  const human = [{ author: { login: "kiaquila" }, body: `**Reviewed commit:** \`${HEAD}\`` }];
+
+  assert.equal(commentReviews(clean, HEAD), true);
+  assert.equal(commentReviews(other, HEAD), false);
+  assert.equal(commentReviews(human, HEAD), false);
+  assert.equal(commentReviews([], HEAD), false);
+
+  /* No review object for this head, but the comment carries the verdict. */
+  assert.equal(evaluate(pull({ commit: "0".repeat(40), comments: clean }), HEAD).reviewed, true);
+});
+
+test("the Codex gate wants a review of this exact head", () => {
+  assert.equal(evaluate(pull(), HEAD).reviewed, true);
+  assert.equal(evaluate(pull({ commit: "0".repeat(40) }), HEAD).reviewed, false);
+});
+
+test("a finding is reported by its title, not its badge markup", () => {
+  const body = "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange)</sub></sub>  Paginate all threads**\n\nDetail.";
+  assert.equal(headline(body), "Paginate all threads");
+});
+
+test("the Codex gate blocks on unresolved P0-P2 findings only", () => {
+  const finding = (isResolved, body) => ({ isResolved, comments: { nodes: [{ path: "a.mjs", body }] } });
+  assert.deepEqual(evaluate(pull({ threads: [finding(true, "**P1 Badge** Fix it")] }), HEAD).blocking, []);
+  assert.deepEqual(evaluate(pull({ threads: [finding(false, "**P3 Badge** Nit")] }), HEAD).blocking, []);
+  assert.deepEqual(
+    evaluate(pull({ threads: [finding(false, "**P1 Badge** Fix it")] }), HEAD).blocking,
+    ["a.mjs: P1 Badge Fix it"]
+  );
+});
