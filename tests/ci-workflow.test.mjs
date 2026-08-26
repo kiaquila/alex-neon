@@ -73,3 +73,12 @@ test("no contractual job can be skipped by a condition", () => {
     assert.equal(String(job(name).if).trim(), condition, `the ${name} condition changed`);
   }
 });
+
+/* GitHub skips a job whose dependency was skipped, so `needs: ai-review` would
+   take the website and guard checks out of push, schedule, and manual runs
+   while every assertion above still passed. These four jobs are independent. */
+test("no contractual job depends on another", () => {
+  for (const name of Object.keys(workflow.jobs ?? {})) {
+    assert.ok(!("needs" in job(name)), `the ${name} job must not declare needs`);
+  }
+});
