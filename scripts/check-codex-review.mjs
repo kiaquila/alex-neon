@@ -144,8 +144,20 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
     }
 
     if (reviewed && blocking.length === 0) {
-      console.log(`Codex reviewed ${head} with no unresolved P0-P2 finding.`);
-      process.exit(0);
+      /* The queries above run in parallel, so the thread list can have been read
+         just before a review was submitted and the review just after it. Read
+         the threads once more, now that the review is known to exist, so a
+         finding submitted in that window cannot slip past. */
+      const settled = evaluate(
+        { ...pullRequest, reviewThreads: { nodes: await collectAll(token, THREADS_QUERY, variables) } },
+        process.env.CODEX_REVIEW_HEAD_SHA
+      );
+      if (settled.blocking.length === 0) {
+        console.log(`Codex reviewed ${head} with no unresolved P0-P2 finding.`);
+        process.exit(0);
+      }
+      console.error(settled.blocking.map((finding) => `- Unresolved finding — ${finding}`).join("\n"));
+      process.exit(1);
     }
     if (blocking.length) {
       console.error(blocking.map((finding) => `- Unresolved finding — ${finding}`).join("\n"));

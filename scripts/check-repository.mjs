@@ -16,7 +16,8 @@ const SECRETS = [
   ["GitHub token", /gh[pousr]_[A-Za-z0-9]{20,}/],
   ["GitHub fine-grained token", /github_pat_[A-Za-z0-9_]{20,}/],
   ["API key", /sk-[A-Za-z0-9_-]{32,}/],
-  ["AWS access key", /AKIA[0-9A-Z]{16}/]
+  /* AKIA is long-lived, ASIA is an STS temporary key; both are credentials. */
+  ["AWS access key", /A[KS]IA[0-9A-Z]{16}/]
 ];
 const PERSONAL_PATHS = [/\/Users\/[A-Za-z0-9._-]+\//, /\/home\/[A-Za-z0-9._-]+\//, /[A-Za-z]:\\Users\\/];
 
@@ -68,7 +69,12 @@ function permissionFailures(where, grants) {
 
 function actionFailures(where, uses) {
   const action = String(uses);
-  if (action.startsWith("./") || action.startsWith("docker://")) return [];
+  /* A local action is reviewed with the repository. A container action is not,
+     so it needs an immutable digest — a tag like `:latest` can be moved. */
+  if (action.startsWith("./")) return [];
+  if (action.startsWith("docker://")) {
+    return /@sha256:[a-f0-9]{64}$/.test(action) ? [] : [`${where}: ${action}`];
+  }
   const ref = action.slice(action.lastIndexOf("@") + 1);
   return /^[a-f0-9]{40}$/.test(ref) ? [] : [`${where}: ${action}`];
 }
@@ -192,8 +198,14 @@ export function scanRepository(root) {
     const normalized = file.split(sep).join("/");
     failures.push(...checkTrackedPath(file));
     const path = join(root, file);
-    if (!existsSync(path)) continue;
-    const stat = lstatSync(path);
+    /* `existsSync` follows the link, so a dangling symlink would look absent and
+       skip the symlink rule entirely. `lstatSync` reports the link itself. */
+    let stat;
+    try {
+      stat = lstatSync(path);
+    } catch {
+      continue;
+    }
     if (stat.isSymbolicLink()) {
       failures.push(`Symbolic links are not allowed: ${normalized}`);
       continue;

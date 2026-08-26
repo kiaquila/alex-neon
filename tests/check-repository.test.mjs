@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 
-import { checkText, checkTrackedPath, checkWorkflowText, scanFileText } from "../scripts/check-repository.mjs";
+import { checkText, checkTrackedPath, checkWorkflowText, scanFileText, scanRepository } from "../scripts/check-repository.mjs";
 import { commentReviews, evaluate, headline } from "../scripts/check-codex-review.mjs";
 
 const WORKFLOW = ".github/workflows/ci.yml";
@@ -33,6 +34,8 @@ test("secrets and personal absolute paths are found in file text", () => {
   const homePath = `/User${"s"}/someone/projects/x`;
   assert.deepEqual(checkText("a.md", "nothing to see"), []);
   assert.match(checkText("a.md", awsKey)[0], /Possible AWS access key/);
+  /* STS temporary keys are equally sensitive and share the suffix shape. */
+  assert.match(checkText("a.md", `ASIA${"0123456789ABCDEF"}`)[0], /Possible AWS access key/);
   assert.match(checkText("a.md", `github_pat_${"A".repeat(30)}`)[0], /Possible GitHub fine-grained token/);
   assert.match(checkText("a.md", `see ${homePath}`)[0], /Personal absolute path/);
 });
@@ -139,6 +142,17 @@ test("actions must be pinned to a full commit SHA", () => {
   assert.deepEqual(checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    steps:\n      - uses: ./.github/x\n`)), []);
 });
 
+/* Reported by Codex review: a container action is not reviewed with the
+   repository, and a tag can be moved under it. */
+test("a docker action needs an immutable digest", () => {
+  const digest = `docker://owner/image@sha256:${"a".repeat(64)}`;
+  assert.deepEqual(checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    steps:\n      - uses: ${digest}\n`)), []);
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    steps:\n      - uses: docker://owner/image:latest\n`)),
+    ["Action is not pinned to a full SHA in .github/workflows/ci.yml: jobs.a.steps[0].uses: docker://owner/image:latest"]
+  );
+});
+
 /* Reported by Codex review: walking every mapping made workflow *data* look
    like a grant or an action reference. Only the positions GitHub gives meaning
    to are read. */
@@ -169,6 +183,26 @@ test("only a real, non-empty on: key counts as a trigger", () => {
   }
   assert.deepEqual(checkWorkflowText(WORKFLOW, `on: push\n${head}`), []);
   assert.deepEqual(checkWorkflowText(WORKFLOW, `on: [push, pull_request]\n${head}`), []);
+});
+
+/* Reported by Codex review: `existsSync` follows a link, so a dangling symlink
+   used to look absent and skip the symlink rule entirely. */
+test("a dangling symlink is still reported", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "guard-"));
+  try {
+    await writeFile(join(directory, ".gitignore"), "");
+    await writeFile(join(directory, "kept.txt"), "fine\n");
+    await symlink("nowhere.txt", join(directory, "dangling.txt"));
+    execFileSync("git", ["init", "-q"], { cwd: directory });
+
+    const { failures } = scanRepository(directory);
+    assert.deepEqual(
+      failures.filter((failure) => /Symbolic links/.test(failure)),
+      ["Symbolic links are not allowed: dangling.txt"]
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 /* Reported by Codex review: read-only `GITHUB_TOKEN` permissions say nothing
