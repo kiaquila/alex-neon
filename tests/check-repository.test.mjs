@@ -5,7 +5,14 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 
-import { checkText, checkTrackedPath, checkWorkflowText, scanFileText, scanRepository } from "../scripts/check-repository.mjs";
+import {
+  checkActionManifestText,
+  checkText,
+  checkTrackedPath,
+  checkWorkflowText,
+  scanFileText,
+  scanRepository
+} from "../scripts/check-repository.mjs";
 import { commentReviews, evaluate, headline } from "../scripts/check-codex-review.mjs";
 
 const WORKFLOW = ".github/workflows/ci.yml";
@@ -243,6 +250,23 @@ test("a secret is found in a large file, and across a chunk boundary", async () 
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+/* Reported by Codex review: `./` is exempt from pinning because it is reviewed
+   here — so what it calls must be checked too, or it is a bypass. */
+test("a local composite action cannot smuggle in an unpinned action", () => {
+  const MANIFEST = ".github/actions/check/action.yml";
+  assert.deepEqual(
+    checkActionManifestText(MANIFEST, `name: check\nruns:\n  using: composite\n  steps:\n    - uses: ${PINNED}\n`),
+    []
+  );
+  assert.deepEqual(
+    checkActionManifestText(MANIFEST, "name: check\nruns:\n  using: composite\n  steps:\n    - uses: actions/setup-node@v7\n"),
+    [`Action is not pinned to a full SHA in ${MANIFEST}: runs.steps[0].uses: actions/setup-node@v7`]
+  );
+  /* A manifest with no steps at all is not a finding. */
+  assert.deepEqual(checkActionManifestText(MANIFEST, "name: check\nruns:\n  using: node20\n  main: index.js\n"), []);
+  assert.match(checkActionManifestText(MANIFEST, "runs: [unclosed\n")[0], /not parseable YAML/);
 });
 
 const HEAD = "f41182e430a9c296ada67aaf6038d010023cbc90";

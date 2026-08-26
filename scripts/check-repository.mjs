@@ -79,6 +79,28 @@ function actionFailures(where, uses) {
   return /^[a-f0-9]{40}$/.test(ref) ? [] : [`${where}: ${action}`];
 }
 
+/* A local `./` action is exempt from pinning because it is reviewed here — but
+   its own manifest can call an external one, so the same rule applies inside. */
+export function checkActionManifestText(manifest, text) {
+  let document;
+  try {
+    document = parseYaml(text);
+  } catch (error) {
+    return [`Action manifest is not parseable YAML: ${manifest}: ${error.message}`];
+  }
+  if (!isMapping(document)) return [`Action manifest must be a YAML mapping: ${manifest}`];
+
+  const steps = Array.isArray(document.runs?.steps) ? document.runs.steps : [];
+  const failures = [];
+  for (const [index, step] of steps.entries()) {
+    if (!isMapping(step) || typeof step.uses !== "string") continue;
+    for (const action of actionFailures(`runs.steps[${index}].uses`, step.uses)) {
+      failures.push(`Action is not pinned to a full SHA in ${manifest}: ${action}`);
+    }
+  }
+  return failures;
+}
+
 export function checkWorkflowText(workflow, text) {
   let document;
   try {
@@ -211,10 +233,11 @@ export function scanRepository(root) {
       continue;
     }
     if (!stat.isFile()) continue;
-    const workflowText = /^\.github\/workflows\/[^/]+\.ya?ml$/.test(normalized)
-      ? readFileSync(path, "utf8")
-      : null;
-    if (workflowText !== null) failures.push(...checkWorkflowText(normalized, workflowText));
+    if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(normalized)) {
+      failures.push(...checkWorkflowText(normalized, readFileSync(path, "utf8")));
+    } else if (/^action\.ya?ml$/.test(basename(normalized))) {
+      failures.push(...checkActionManifestText(normalized, readFileSync(path, "utf8")));
+    }
     failures.push(...scanFileText(path, normalized));
   }
   return { failures: [...new Set(failures)], files };
