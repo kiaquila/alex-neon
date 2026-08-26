@@ -29,7 +29,33 @@ const THREADS_QUERY = `query($owner:String!,$repo:String!,$number:Int!,$after:St
   }}
 }`;
 
+const COMMENTS_QUERY = `query($owner:String!,$repo:String!,$number:Int!,$after:String){
+  repository(owner:$owner,name:$repo){pullRequest(number:$number){
+    connection: comments(first:100,after:$after){
+      pageInfo{hasNextPage endCursor}
+      nodes{author{login} body}
+    }
+  }}
+}`;
+
 const CODEX = "chatgpt-codex-connector";
+/* Codex signs reviews as `chatgpt-codex-connector` and comments as
+   `chatgpt-codex-connector[bot]`. */
+const isCodex = (login) => login?.replace(/\[bot\]$/, "") === CODEX;
+
+/* Codex reports findings as a pull-request review, but when it finds nothing it
+   says so in a comment naming an abbreviated commit instead. Both are evidence
+   that this head was looked at; only the first can carry a blocking finding. */
+const REVIEWED_COMMIT = /Reviewed commit:\W*([0-9a-f]{7,40})/;
+
+export function commentReviews(comments, head) {
+  return comments.some((comment) => {
+    if (!isCodex(comment.author?.login)) return false;
+    const [, reviewed] = REVIEWED_COMMIT.exec(comment.body ?? "") ?? [];
+    return Boolean(reviewed) && head.startsWith(reviewed);
+  });
+}
+
 const BLOCKING = /\bP[0-2]\b/;
 
 /* Codex opens a finding with a severity badge built from nested <sub> tags and
@@ -46,8 +72,8 @@ export function headline(body) {
 export function evaluate(pullRequest, headSha) {
   const head = headSha || pullRequest.headRefOid;
   const reviewed = pullRequest.reviews.nodes.some(
-    (review) => review.author?.login === CODEX && review.commit?.oid === head
-  );
+    (review) => isCodex(review.author?.login) && review.commit?.oid === head
+  ) || commentReviews(pullRequest.comments?.nodes ?? [], head);
   const blocking = pullRequest.reviewThreads.nodes
     .filter((thread) => !thread.isResolved)
     .map((thread) => thread.comments.nodes[0])
@@ -97,12 +123,18 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
      already landed with findings is a verdict, not a pending state, and ends
      the wait immediately. */
   for (;;) {
-    const [{ headRefOid }, reviews, reviewThreads] = await Promise.all([
+    const [{ headRefOid }, reviews, reviewThreads, comments] = await Promise.all([
       graphql(token, HEAD_QUERY, variables),
       collectAll(token, REVIEWS_QUERY, variables),
-      collectAll(token, THREADS_QUERY, variables)
+      collectAll(token, THREADS_QUERY, variables),
+      collectAll(token, COMMENTS_QUERY, variables)
     ]);
-    const pullRequest = { headRefOid, reviews: { nodes: reviews }, reviewThreads: { nodes: reviewThreads } };
+    const pullRequest = {
+      headRefOid,
+      reviews: { nodes: reviews },
+      reviewThreads: { nodes: reviewThreads },
+      comments: { nodes: comments }
+    };
     const { head, reviewed, blocking } = evaluate(pullRequest, process.env.CODEX_REVIEW_HEAD_SHA);
 
     /* The head moving means a newer run is already queued for the new one. */

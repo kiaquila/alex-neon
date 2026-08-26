@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { checkText, checkTrackedPath, checkWorkflowText, scanFileText } from "../scripts/check-repository.mjs";
-import { evaluate, headline } from "../scripts/check-codex-review.mjs";
+import { commentReviews, evaluate, headline } from "../scripts/check-codex-review.mjs";
 
 const WORKFLOW = ".github/workflows/ci.yml";
 const PINNED = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
@@ -213,13 +213,36 @@ test("a secret is found in a large file, and across a chunk boundary", async () 
 
 const HEAD = "f41182e430a9c296ada67aaf6038d010023cbc90";
 
-function pull({ commit = HEAD, threads = [] } = {}) {
+function pull({ commit = HEAD, threads = [], comments = [] } = {}) {
   return {
     headRefOid: HEAD,
     reviews: { nodes: [{ author: { login: "chatgpt-codex-connector" }, commit: { oid: commit } }] },
-    reviewThreads: { nodes: threads }
+    reviewThreads: { nodes: threads },
+    comments: { nodes: comments }
   };
 }
+
+/* A clean Codex verdict arrives as a comment naming an abbreviated commit, not
+   as a review object, so the gate must accept that form too. */
+test("a clean verdict posted as a comment counts as a review of this head", () => {
+  const clean = [{
+    author: { login: "chatgpt-codex-connector[bot]" },
+    body: `Codex Review: Didn't find any major issues. Nice work!\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``
+  }];
+  const other = [{
+    author: { login: "chatgpt-codex-connector[bot]" },
+    body: "Codex Review: fine.\n\n**Reviewed commit:** `0123456789`"
+  }];
+  const human = [{ author: { login: "kiaquila" }, body: `**Reviewed commit:** \`${HEAD}\`` }];
+
+  assert.equal(commentReviews(clean, HEAD), true);
+  assert.equal(commentReviews(other, HEAD), false);
+  assert.equal(commentReviews(human, HEAD), false);
+  assert.equal(commentReviews([], HEAD), false);
+
+  /* No review object for this head, but the comment carries the verdict. */
+  assert.equal(evaluate(pull({ commit: "0".repeat(40), comments: clean }), HEAD).reviewed, true);
+});
 
 test("the Codex gate wants a review of this exact head", () => {
   assert.equal(evaluate(pull(), HEAD).reviewed, true);
