@@ -283,6 +283,28 @@ test("a local composite action cannot smuggle in an unpinned action", () => {
   assert.match(checkActionManifestText(MANIFEST, "runs: [unclosed\n")[0], /not parseable YAML/);
 });
 
+/* Reported by Codex review: a contractual check whose failure is swallowed is
+   green and meaningless, which is the same hole as replacing it with `true`. */
+test("a job or step may not ignore its own failure", () => {
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(
+      `jobs:\n  a:\n    continue-on-error: true\n    steps:\n      - uses: ${PINNED}\n`
+    )),
+    ["A failure must not be ignored in .github/workflows/ci.yml: jobs.a.continue-on-error"]
+  );
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(
+      `jobs:\n  a:\n    steps:\n      - run: npm test\n        continue-on-error: \${{ github.event_name == 'push' }}\n`
+    )),
+    ["A failure must not be ignored in .github/workflows/ci.yml: jobs.a.steps[0].continue-on-error"]
+  );
+  /* Explicitly false is the default written out, and is not a finding. */
+  assert.deepEqual(
+    checkWorkflowText(WORKFLOW, workflow(`jobs:\n  a:\n    continue-on-error: false\n    steps:\n      - run: npm test\n`)),
+    []
+  );
+});
+
 const HEAD = "f41182e430a9c296ada67aaf6038d010023cbc90";
 
 function pull({ commit = HEAD, threads = [], comments = [] } = {}) {

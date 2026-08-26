@@ -155,9 +155,19 @@ export function checkWorkflowText(workflow, text) {
     }
     /* A job-level `uses` is a reusable workflow, and needs the same pin. */
     if (typeof job.uses === "string") actions.push([`jobs.${id}.uses`, job.uses]);
+    /* A required check whose failure is swallowed is not a check. An expression
+       is not `false` either — whether it swallows the failure is decided at run
+       time, which is not something a guard can read here. */
+    if ("continue-on-error" in job && job["continue-on-error"] !== false) {
+      failures.push(`A failure must not be ignored in ${workflow}: jobs.${id}.continue-on-error`);
+    }
     const steps = Array.isArray(job.steps) ? job.steps : [];
     for (const [index, step] of steps.entries()) {
-      if (isMapping(step) && typeof step.uses === "string") {
+      if (!isMapping(step)) continue;
+      if ("continue-on-error" in step && step["continue-on-error"] !== false) {
+        failures.push(`A failure must not be ignored in ${workflow}: jobs.${id}.steps[${index}].continue-on-error`);
+      }
+      if (typeof step.uses === "string") {
         actions.push([`jobs.${id}.steps[${index}].uses`, step.uses]);
       }
     }
