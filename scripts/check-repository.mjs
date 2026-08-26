@@ -14,6 +14,7 @@ const FORBIDDEN_NAMES = [/^\.DS_Store$/, /^\.env(?:\..+)?$/, /\.(?:key|p12|pfx|p
 const SECRETS = [
   ["private key", /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/],
   ["GitHub token", /gh[pousr]_[A-Za-z0-9]{20,}/],
+  ["GitHub fine-grained token", /github_pat_[A-Za-z0-9_]{20,}/],
   ["API key", /sk-[A-Za-z0-9_-]{32,}/],
   ["AWS access key", /AKIA[0-9A-Z]{16}/]
 ];
@@ -88,15 +89,16 @@ export function checkWorkflowText(workflow, text) {
   /* GitHub recognises `on` and nothing else; the YAML 1.2 core schema this
      parser uses keeps it a string rather than folding it to `true`. */
   const triggers = document.on;
-  if (triggers === undefined) {
-    failures.push(`Workflow declares no on: triggers: ${workflow}`);
-  } else {
-    const names = isMapping(triggers)
+  /* `on:` alone parses to null, and `on: []` / `on: {}` are defined but empty.
+     None of them names an event, so none of them can schedule the workflow. */
+  const names = triggers === undefined || triggers === null
+    ? []
+    : isMapping(triggers)
       ? Object.keys(triggers)
-      : [triggers].flat().map((trigger) => String(trigger));
-    if (names.includes("pull_request_target")) {
-      failures.push(`High-risk pull_request_target trigger in ${workflow}`);
-    }
+      : [triggers].flat().map((trigger) => String(trigger)).filter(Boolean);
+  if (names.length === 0) failures.push(`Workflow declares no on: triggers: ${workflow}`);
+  if (names.includes("pull_request_target")) {
+    failures.push(`High-risk pull_request_target trigger in ${workflow}`);
   }
 
   if (!("permissions" in document)) {

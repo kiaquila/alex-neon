@@ -33,6 +33,7 @@ test("secrets and personal absolute paths are found in file text", () => {
   const homePath = `/User${"s"}/someone/projects/x`;
   assert.deepEqual(checkText("a.md", "nothing to see"), []);
   assert.match(checkText("a.md", awsKey)[0], /Possible AWS access key/);
+  assert.match(checkText("a.md", `github_pat_${"A".repeat(30)}`)[0], /Possible GitHub fine-grained token/);
   assert.match(checkText("a.md", `see ${homePath}`)[0], /Personal absolute path/);
 });
 
@@ -159,11 +160,15 @@ test("a reusable workflow called by a job needs the same pin", () => {
 
 /* Reported by Codex review: GitHub recognises `on` and nothing else, so a
    workflow whose trigger key was replaced never runs and must be reported. */
-test("only a real on: key counts as a trigger", () => {
-  assert.deepEqual(
-    checkWorkflowText(WORKFLOW, `name: CI\n"true":\n  pull_request:\npermissions:\n  contents: read\njobs: {}\n`),
-    ["Workflow declares no on: triggers: .github/workflows/ci.yml"]
-  );
+test("only a real, non-empty on: key counts as a trigger", () => {
+  const missing = ["Workflow declares no on: triggers: .github/workflows/ci.yml"];
+  const head = 'name: CI\npermissions:\n  contents: read\njobs: {}\n';
+  /* A replaced key, and the three shapes that parse but name no event. */
+  for (const triggers of ['"true":\n  pull_request:', "on:", "on: []", "on: {}"]) {
+    assert.deepEqual(checkWorkflowText(WORKFLOW, `${triggers}\n${head}`), missing, `accepted: ${triggers}`);
+  }
+  assert.deepEqual(checkWorkflowText(WORKFLOW, `on: push\n${head}`), []);
+  assert.deepEqual(checkWorkflowText(WORKFLOW, `on: [push, pull_request]\n${head}`), []);
 });
 
 /* Reported by Codex review: read-only `GITHUB_TOKEN` permissions say nothing
