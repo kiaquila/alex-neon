@@ -266,6 +266,20 @@ test("a local composite action cannot smuggle in an unpinned action", () => {
   );
   /* A manifest with no steps at all is not a finding. */
   assert.deepEqual(checkActionManifestText(MANIFEST, "name: check\nruns:\n  using: node20\n  main: index.js\n"), []);
+
+  /* A Docker action names its own image, and the same digest rule applies. */
+  assert.deepEqual(
+    checkActionManifestText(MANIFEST, "name: check\nruns:\n  using: docker\n  image: Dockerfile\n"),
+    []
+  );
+  assert.deepEqual(
+    checkActionManifestText(MANIFEST, `name: check\nruns:\n  using: docker\n  image: docker://owner/image@sha256:${"a".repeat(64)}\n`),
+    []
+  );
+  assert.deepEqual(
+    checkActionManifestText(MANIFEST, "name: check\nruns:\n  using: docker\n  image: docker://owner/image:latest\n"),
+    [`Action is not pinned to a full SHA in ${MANIFEST}: runs.image: docker://owner/image:latest`]
+  );
   assert.match(checkActionManifestText(MANIFEST, "runs: [unclosed\n")[0], /not parseable YAML/);
 });
 

@@ -90,8 +90,17 @@ export function checkActionManifestText(manifest, text) {
   }
   if (!isMapping(document)) return [`Action manifest must be a YAML mapping: ${manifest}`];
 
-  const steps = Array.isArray(document.runs?.steps) ? document.runs.steps : [];
   const failures = [];
+  /* A Docker action names its own image. A local `Dockerfile` is built here and
+     reviewed with the repository; a `docker://` image is neither. */
+  const image = document.runs?.image;
+  if (typeof image === "string" && image.startsWith("docker://")) {
+    for (const action of actionFailures("runs.image", image)) {
+      failures.push(`Action is not pinned to a full SHA in ${manifest}: ${action}`);
+    }
+  }
+
+  const steps = Array.isArray(document.runs?.steps) ? document.runs.steps : [];
   for (const [index, step] of steps.entries()) {
     if (!isMapping(step) || typeof step.uses !== "string") continue;
     for (const action of actionFailures(`runs.steps[${index}].uses`, step.uses)) {
