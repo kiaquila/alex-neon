@@ -40,8 +40,10 @@ test("workflows must declare top-level permissions and avoid pull_request_target
     /must declare top-level permissions/
   );
   assert.ok(
-    checkWorkflowText(WORKFLOW, workflow(`on:\n  pull_request_target:\njobs: {}\n`))
-      .some((failure) => /pull_request_target/.test(failure))
+    checkWorkflowText(
+      WORKFLOW,
+      `name: CI\non:\n  pull_request_target:\n\npermissions:\n  contents: read\njobs: {}\n`
+    ).some((failure) => /pull_request_target/.test(failure))
   );
 });
 
@@ -74,45 +76,52 @@ test("permissions: none is accepted and read-all keeps its scalar form", () => {
   );
 });
 
-/* Both reported by Codex review: a line-oriented guard cannot see a key that
-   flow style has moved off the start of its line, so it must refuse the style
-   rather than silently pass the workflow. */
-test("flow-style permissions and steps are refused, not skipped", () => {
-  const flowPermissions = checkWorkflowText(
-    WORKFLOW,
-    `name: CI\non:\n  pull_request:\n\npermissions: { contents: write }\njobs: {}\n`
-  );
-  assert.ok(flowPermissions.some((failure) => /must be read-only/.test(failure)));
-
-  const nestedPermissions = checkWorkflowText(
-    WORKFLOW,
-    workflow(`jobs:\n  a:\n    permissions: { checks: write }\n    steps: []\n`)
-  );
-  assert.ok(nestedPermissions.some((failure) => /must be read-only/.test(failure)));
-
-  const flowSteps = checkWorkflowText(
-    WORKFLOW,
-    workflow(`jobs:\n  a:\n    steps: [{ uses: actions/checkout@v4 }]\n`)
-  );
-  assert.deepEqual(flowSteps, [
-    "Inline or flow-style `uses:` is unreadable to this guard in .github/workflows/ci.yml; use block style"
-  ]);
-
-  const anchored = checkWorkflowText(
-    WORKFLOW,
-    `name: CI\non:\n  pull_request:\n\npermissions: *grants\njobs: {}\n`
-  );
-  assert.ok(anchored.some((failure) => /must be read-only/.test(failure)));
+/* Four rounds of Codex review, all the same shape: a way to write YAML that a
+   line-oriented reader misses. The guard parses the document now, so each of
+   these is read as the mapping GitHub will act on. */
+test("flow style, quoted keys, and anchors cannot hide a write grant", () => {
+  const cases = [
+    `name: CI\non:\n  pull_request:\npermissions: { contents: write }\njobs: {}\n`,
+    workflow(`jobs:\n  a:\n    permissions: { checks: write }\n    steps: []\n`),
+    `name: CI\non:\n  pull_request:\npermissions: read-all\njobs:\n  a:\n    "permissions": { contents: write }\n    steps: []\n`,
+    `name: CI\non:\n  pull_request:\npermissions: &grants\n  contents: write\njobs:\n  a:\n    permissions: *grants\n    steps: []\n`
+  ];
+  for (const text of cases) {
+    assert.ok(
+      checkWorkflowText(WORKFLOW, text).some((failure) => /must be read-only/.test(failure)),
+      `write grant slipped through:\n${text}`
+    );
+  }
 });
 
-/* The words this guard counts also appear in the comments explaining them. */
-test("comments do not trip the flow-style refusal", () => {
+test("flow style and quoted keys cannot hide an unpinned action", () => {
+  const cases = [
+    workflow(`jobs:\n  a:\n    steps: [{ uses: actions/checkout@v4 }]\n`),
+    workflow(`jobs:\n  a:\n    steps:\n      - "uses": actions/checkout@v4\n`),
+    workflow(`jobs:\n  a:\n    steps: [{ name: "audit # note", uses: actions/checkout@v4 }]\n`)
+  ];
+  for (const text of cases) {
+    assert.deepEqual(
+      checkWorkflowText(WORKFLOW, text),
+      ["Action is not pinned to a full SHA in .github/workflows/ci.yml: actions/checkout@v4"],
+      `unpinned action slipped through:\n${text}`
+    );
+  }
+});
+
+/* A hash inside a quoted scalar is content, not a comment; a real comment is. */
+test("quoted hashes are content and comments are still comments", () => {
   assert.deepEqual(
     checkWorkflowText(WORKFLOW, workflow(
-      `jobs:\n  a:\n    # permissions: none needed here\n    steps:\n      - uses: ${PINNED} # uses: pinned\n`
+      `jobs:\n  a:\n    # permissions: none needed here\n    steps:\n      - name: "audit # note"\n        uses: ${PINNED} # v7.0.1\n`
     )),
     []
   );
+});
+
+test("a workflow that cannot be parsed fails closed", () => {
+  assert.match(checkWorkflowText(WORKFLOW, "permissions: [unclosed\n")[0], /not parseable YAML/);
+  assert.match(checkWorkflowText(WORKFLOW, "just a string\n")[0], /must be a YAML mapping/);
 });
 
 test("actions must be pinned to a full commit SHA", () => {

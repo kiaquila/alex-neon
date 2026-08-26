@@ -49,6 +49,9 @@ jobs:
         with:
           node-version: "22.18.0"
 
+      - name: Install the locked guard dependency
+        run: npm ci --ignore-scripts
+
       - name: Run the repository guard and its tests
         run: npm run check && npm test
 

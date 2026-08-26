@@ -32,10 +32,12 @@ deployment credentials are not versioned.
 
 - **No workflow in this repository may grant a write permission.** Nothing here
   needs one: CI builds, tests, scans, and reads review state. The guard fails on
-  any `write` grant, in either YAML form, so adding one is a deliberate,
-  reviewable change to the guard and its tests rather than a quiet edit. This is
-  what lets the guard stay small — there is no write-capable job whose shell has
-  to be analysed for ways an attacker's words could become commands.
+  any `write` grant, so adding one is a deliberate, reviewable change to the
+  guard and its tests rather than a quiet edit. This is what lets the guard stay
+  small — there is no write-capable job whose shell has to be analysed for ways
+  an attacker's words could become commands. The guard parses workflow YAML
+  rather than pattern-matching it, so flow style, quoted keys, and anchors are
+  read as the mapping GitHub will act on.
 - Pin external GitHub Actions to full commit SHAs. Do not use
   `pull_request_target`, `write-all`, or implicit secret inheritance.
 - Keep `.env`, private keys, session files, tokens, personal absolute paths,

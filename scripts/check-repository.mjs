@@ -7,6 +7,7 @@
 import { basename, join, resolve, sep } from "node:path";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { parse as parseYaml } from "yaml";
 
 const FORBIDDEN_SEGMENTS = new Set([".next", ".wrangler", "build", "coverage", "dist", "node_modules"]);
 const FORBIDDEN_NAMES = [/^\.DS_Store$/, /^\.env(?:\..+)?$/, /\.(?:key|p12|pfx|pem|session)$/i];
@@ -46,58 +47,68 @@ export function checkText(normalized, text) {
   return failures;
 }
 
-/* Comments may contain the very words this guard counts, so drop them first.
-   Only used for counting keys, never for reading a value. */
-function withoutComments(text) {
-  return text.replace(/^[ \t]*#.*$/gm, "").replace(/[ \t]+#.*$/gm, "");
+/* Workflows are parsed, not pattern-matched. YAML has too many ways to write
+   the same mapping — flow style, quoted keys, anchors, a hash inside a quoted
+   scalar — for a line-oriented reader to stay honest about what GitHub will
+   actually grant. Parsing is why this function is short. */
+function* walk(node, key = null) {
+  if (Array.isArray(node)) {
+    for (const item of node) yield* walk(item, key);
+    return;
+  }
+  if (node === null || typeof node !== "object") return;
+  for (const [childKey, value] of Object.entries(node)) {
+    yield [childKey, value];
+    yield* walk(value, childKey);
+  }
 }
 
-/* The guard reads workflows line by line instead of parsing YAML, which keeps it
-   dependency-free. Flow style — `permissions: { contents: write }`,
-   `steps: [{ uses: x@v4 }]` — hides a key from a line-oriented reader, so a key
-   that is not at the start of its own line is refused rather than skipped. */
-function refuseUnreadableStyle(workflow, text, key) {
-  const bare = withoutComments(text);
-  const total = [...bare.matchAll(new RegExp(`\\b${key}:`, "g"))].length;
-  const readable = [...bare.matchAll(new RegExp(`^\\s*-?\\s*${key}:`, "gm"))].length;
-  return total > readable
-    ? [`Inline or flow-style \`${key}:\` is unreadable to this guard in ${workflow}; use block style`]
-    : [];
+function permissionFailures(grants) {
+  if (typeof grants === "string") return grants === "read-all" ? [] : [grants];
+  if (grants === null || typeof grants !== "object" || Array.isArray(grants)) {
+    return [JSON.stringify(grants)];
+  }
+  return Object.entries(grants)
+    .filter(([, grant]) => !READ_ONLY_GRANTS.has(grant))
+    .map(([scope, grant]) => `${scope}: ${grant}`);
 }
 
 export function checkWorkflowText(workflow, text) {
-  const failures = [];
-  if (/\bpull_request_target\b/.test(text)) {
-    failures.push(`High-risk pull_request_target trigger in ${workflow}`);
+  let document;
+  try {
+    document = parseYaml(text);
+  } catch (error) {
+    return [`Workflow is not parseable YAML: ${workflow}: ${error.message}`];
   }
-  /* Top-level `permissions:` sits at column 0, in either scalar or mapping form. */
-  if (!/^permissions:/m.test(text)) {
+  if (document === null || typeof document !== "object") {
+    return [`Workflow must be a YAML mapping: ${workflow}`];
+  }
+
+  const failures = [];
+  /* YAML 1.1 readers fold `on:` to `true`; the 1.2 core schema keeps it a
+     string. Accept either so the trigger is never silently unread. */
+  const triggers = document.on ?? document.true;
+  if (triggers === undefined) failures.push(`Workflow declares no triggers: ${workflow}`);
+  if (!("permissions" in document)) {
     failures.push(`Workflow must declare top-level permissions: ${workflow}`);
   }
-  failures.push(...refuseUnreadableStyle(workflow, text, "permissions"));
-  failures.push(...refuseUnreadableStyle(workflow, text, "uses"));
-  /* Any value on the `permissions:` line itself. `read-all` is the only one that
-     grants nothing writable; `write-all`, an alias, and a flow mapping all fail. */
-  for (const [, raw] of withoutComments(text).matchAll(/^\s*permissions:[ \t]*(\S.*?)[ \t]*$/gm)) {
-    const scalar = raw.replace(/^["']|["']$/g, "");
-    if (scalar !== "read-all") failures.push(`Workflow permissions must be read-only in ${workflow}: ${scalar}`);
-  }
-  /* Mapping form: every `scope: grant` under a `permissions:` block. */
-  for (const match of text.matchAll(/^([ \t]*)permissions:[ \t]*(?:#.*)?$\n((?:(?:[ \t]*(?:#.*)?)?\n|[ \t]+\S.*\n)*)/gm)) {
-    const indent = match[1].length;
-    for (const line of match[2].split("\n")) {
-      const entry = /^([ \t]+)([A-Za-z-]+):[ \t]*["']?([A-Za-z-]+)["']?[ \t]*(?:#.*)?$/.exec(line);
-      if (!entry || entry[1].length <= indent) continue;
-      if (!READ_ONLY_GRANTS.has(entry[3])) {
-        failures.push(`Workflow permissions must be read-only in ${workflow}: ${entry[2]}: ${entry[3]}`);
+
+  for (const [key, value] of walk(document)) {
+    if (key === "pull_request_target") {
+      failures.push(`High-risk pull_request_target trigger in ${workflow}`);
+    }
+    if (key === "permissions") {
+      for (const grant of permissionFailures(value)) {
+        failures.push(`Workflow permissions must be read-only in ${workflow}: ${grant}`);
       }
     }
-  }
-  for (const [, action] of text.matchAll(/^\s*-?\s*uses:\s*["']?([^\s"']+)["']?\s*(?:#.*)?$/gm)) {
-    if (action.startsWith("./") || action.startsWith("docker://")) continue;
-    const ref = action.slice(action.lastIndexOf("@") + 1);
-    if (!/^[a-f0-9]{40}$/.test(ref)) {
-      failures.push(`Action is not pinned to a full SHA in ${workflow}: ${action}`);
+    if (key === "uses") {
+      const action = String(value);
+      if (action.startsWith("./") || action.startsWith("docker://")) continue;
+      const ref = action.slice(action.lastIndexOf("@") + 1);
+      if (!/^[a-f0-9]{40}$/.test(ref)) {
+        failures.push(`Action is not pinned to a full SHA in ${workflow}: ${action}`);
+      }
     }
   }
   return failures;

@@ -126,13 +126,15 @@ the ideas in `kiaquila/web-design@ea8501fdb90236fcb891e97b15f7a42a62f76ff1`:
 
 | File | What it is |
 | --- | --- |
-| `scripts/check-repository.mjs` | Tracked-file hygiene, secret and personal-path scanning, and workflow rules |
+| `scripts/check-repository.mjs` | Tracked-file hygiene, secret and personal-path scanning, and parsed workflow rules |
 | `scripts/check-codex-review.mjs` | Read-only check that Codex reviewed the current head with no open P0-P2 |
 | `tests/check-repository.test.mjs` | Regression tests for both |
 | `.github/workflows/ci.yml` | One read-only workflow: website, repository safety, OSV, AI review |
 
-That is a one-time transfer of ideas, not a dependency. There is no lock, no
-manifest, no managed path, no sync command, and no upstream SHA to advance.
+That is a one-time transfer of ideas, not a dependency on `web-design`. There is
+no lock, no manifest, no managed path, no sync command, and no upstream SHA to
+advance. The guard's one npm dependency is `yaml`, so that it can read a
+workflow as the mapping GitHub acts on rather than guess at its text.
 These files are edited here like any other project file, in a normal pull
 request, and the guard's rules are deliberately narrower than the baseline's
 because this repository grants no workflow write access at all — see
