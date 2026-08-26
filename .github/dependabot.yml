@@ -8,11 +8,10 @@ updates:
       time: "07:00"
       timezone: "UTC"
     open-pull-requests-limit: 5
+    # github-actions supports only cooldown.default-days; the semver-* keys are
+    # rejected for this ecosystem.
     cooldown:
       default-days: 7
-      semver-major-days: 14
-      semver-minor-days: 7
-      semver-patch-days: 3
     groups:
       github-actions-minor-and-patch:
         applies-to: "version-updates"

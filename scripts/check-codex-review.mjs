@@ -89,27 +89,43 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   }
 
   const variables = { owner, repo, number };
-  const [{ headRefOid }, reviews, reviewThreads] = await Promise.all([
-    graphql(token, HEAD_QUERY, variables),
-    collectAll(token, REVIEWS_QUERY, variables),
-    collectAll(token, THREADS_QUERY, variables)
-  ]);
-  const pullRequest = { headRefOid, reviews: { nodes: reviews }, reviewThreads: { nodes: reviewThreads } };
-  const { head, reviewed, blocking } = evaluate(pullRequest, process.env.CODEX_REVIEW_HEAD_SHA);
+  const deadline = Date.now() + Number(process.env.CODEX_REVIEW_WAIT_MS ?? 600_000);
+  const pollMs = Number(process.env.CODEX_REVIEW_POLL_MS ?? 20_000);
 
-  /* The head moving mid-run means a newer run is already queued for it. */
-  if (pullRequest.headRefOid !== head) {
-    console.log(`Skipped: PR #${number} head moved from ${head} to ${pullRequest.headRefOid}.`);
-    process.exit(0);
+  /* This job starts seconds after the push, while Codex is still reading the
+     diff, so waiting is the normal path rather than an error. A review that has
+     already landed with findings is a verdict, not a pending state, and ends
+     the wait immediately. */
+  for (;;) {
+    const [{ headRefOid }, reviews, reviewThreads] = await Promise.all([
+      graphql(token, HEAD_QUERY, variables),
+      collectAll(token, REVIEWS_QUERY, variables),
+      collectAll(token, THREADS_QUERY, variables)
+    ]);
+    const pullRequest = { headRefOid, reviews: { nodes: reviews }, reviewThreads: { nodes: reviewThreads } };
+    const { head, reviewed, blocking } = evaluate(pullRequest, process.env.CODEX_REVIEW_HEAD_SHA);
+
+    /* The head moving means a newer run is already queued for the new one. */
+    if (headRefOid !== head) {
+      console.log(`Skipped: PR #${number} head moved from ${head} to ${headRefOid}.`);
+      process.exit(0);
+    }
+
+    if (reviewed && blocking.length === 0) {
+      console.log(`Codex reviewed ${head} with no unresolved P0-P2 finding.`);
+      process.exit(0);
+    }
+    if (blocking.length) {
+      console.error(blocking.map((finding) => `- Unresolved finding — ${finding}`).join("\n"));
+      process.exit(1);
+    }
+
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      console.error(`- No Codex review for ${head} within the wait. Comment: @codex review ${head}`);
+      process.exit(1);
+    }
+    console.log(`Waiting for a Codex review of ${head} (${Math.round(remaining / 1000)}s left)...`);
+    await new Promise((wake) => setTimeout(wake, Math.min(pollMs, remaining)));
   }
-
-  const problems = [];
-  if (!reviewed) problems.push(`No Codex review for ${head}. Comment: @codex review ${head}`);
-  for (const finding of blocking) problems.push(`Unresolved finding — ${finding}`);
-
-  if (problems.length) {
-    console.error(problems.map((problem) => `- ${problem}`).join("\n"));
-    process.exit(1);
-  }
-  console.log(`Codex reviewed ${head} with no unresolved P0-P2 finding.`);
 }

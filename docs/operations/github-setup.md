@@ -12,6 +12,12 @@ exact head, so there is no green run to wait for until it is configured:
    job reads that review; it never posts one. Every push needs a fresh request,
    because the gate is tied to the head SHA rather than to the branch.
 
+   The job starts seconds after the push, while Codex is still reading the diff,
+   so it waits up to ten minutes for a review of that head. Post the request
+   promptly and the job goes green on its own. If a review lands after the wait
+   expires, re-run the failed job from the Actions tab — it re-runs in the same
+   pull-request context and finds the review immediately.
+
 Then, once CI is green:
 
 2. Confirm the repository is private unless its content is intentionally public.

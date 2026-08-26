@@ -74,7 +74,9 @@ jobs:
     name: ai-review
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # The job starts while Codex is still reading the diff, so it waits for the
+    # review of this exact head rather than failing ahead of it.
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: read
