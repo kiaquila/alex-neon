@@ -140,17 +140,24 @@ request, and the guard's rules are deliberately narrower than the baseline's
 because this repository grants no workflow write access at all — see
 [`../standards.md`](../standards.md).
 
-## The old source path
+## Source retirement
 
-`alex-neon/` still exists in `kiaquila/web-design`. Do not remove it until this
-repository's history, files, settings, checks, and — if it is ever reconnected —
-its deployment have been independently verified. Removing the source is the last
-step of the migration, not part of it.
+The old `alex-neon/` project directory has been removed from
+`kiaquila/web-design`. The source commit, subtree tree object, rewritten commit
+map, and reproducible `git filter-repo` command above remain the evidence for
+the history transfer; preserving a second live copy of the directory is not a
+requirement of that proof.
 
-## Cloudflare — not connected
+The retired directory is not an operational rollback. A fast rollback uses
+Cloudflare's saved version of the Worker, while any subsequent source correction
+is made and reviewed in this repository.
 
-Nothing in Cloudflare was changed during this migration, and the Git build
-integration is currently disabled: no repository builds the `alex-neon` Worker.
-This repository holds no Cloudflare credential and no deploy workflow. The
-target settings and the rollback-safe order, should the integration be
-re-enabled, are in [`../operations/cloudflare.md`](../operations/cloudflare.md).
+## Cloudflare — connected
+
+The migration itself changed nothing in Cloudflare. The Git build integration
+now builds the `alex-neon` Worker from `kiaquila/alex-neon` on `main`. This
+repository holds no Cloudflare credential and no deploy workflow; Cloudflare
+owns the connection and reports its result through the
+`Workers Builds: alex-neon` check. The target settings and saved-version
+rollback procedure are in
+[`../operations/cloudflare.md`](../operations/cloudflare.md).
