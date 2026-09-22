@@ -1,25 +1,24 @@
 # Cloudflare
 
-**Current state: the Cloudflare Git integration is disabled.** No repository —
-this one or any other — is wired to build the `alex-neon` Worker right now, and
-nothing in this repository can trigger a deploy: CI holds `contents: read` and
-carries no deploy job or credential. Connecting it is a deliberate, separate
-decision by the account owner, not part of any code change.
+**Current state: the `alex-neon` Worker is connected to
+`kiaquila/alex-neon`.** Cloudflare builds the production branch from `main` and
+reports the result to GitHub as the `Workers Builds: alex-neon` check. GitHub
+Actions still holds `contents: read` and carries no deploy job or Cloudflare
+credential; the Git connection and deploy remain controlled by Cloudflare.
 
-Worker names, account identifiers, routes, domains, and credentials are
-project-owned and live in Cloudflare, not here. The only deploy-shaped files in
-this repository are `website/wrangler.json` and the `stage:*` scripts in
-`website/package.json`, which a human can run locally against their own
-credentials.
+Account identifiers, routes, domains, credentials, and the Git connection live
+in Cloudflare, not in GitHub Actions. The repository keeps the project-owned
+Worker configuration in `website/wrangler.json` and the existing `stage:*`
+scripts in `website/package.json`.
 
-## If the integration is re-enabled later
+## Connected build
 
-Record the existing Worker and its active deployment first, so there is a
-rollback point. Then validate the repository and build, disable any old Git
-build connection before enabling a new one, verify a preview URL, and only then
-move production. Never leave two repositories connected to the same Worker.
+Never connect a second repository to the same Worker. Before changing the
+connection or production settings, record the active deployment and saved
+version, validate the repository and build, and verify a preview before moving
+production.
 
-Target build settings, for whoever performs that step:
+Current build settings:
 
 | Setting | Value |
 | --- | --- |
@@ -33,6 +32,14 @@ Target build settings, for whoever performs that step:
 The landing page is static: Cloudflare serves `website/dist` through Workers
 Static Assets, and `website/worker/index.ts` exists only to add the security
 headers the asset pipeline does not set. Keep `compatibility_date` pinned.
+
+## Rollback
+
+For a fast operational rollback, restore the last known-good saved Worker
+version with Cloudflare's rollback controls. The former `alex-neon/` directory
+in `kiaquila/web-design` has been removed and is neither a deployment source nor
+a rollback mechanism. A source change after the rollback belongs in this
+repository and goes through its normal review and build checks.
 
 After any deploy, verify the production response, the error route, security
 headers, the canonical URL, robots policy, sitemap, assets, and the absence of
