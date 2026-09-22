@@ -4,9 +4,9 @@
 индивидуальных занятиях по практической работе с ИИ.
 
 - Оригинал: <https://codex-po-delu-alex.alexgoodmanalexgoodm.chatgpt.site/>
-- Стенд: `https://alex-neon.ks-design.workers.dev` (Worker существует, но
-  Git-интеграция Cloudflare сейчас отключена — ни один репозиторий его не
-  собирает, см. [«Cloudflare-стенд»](#cloudflare-стенд))
+- Стенд: `https://alex-neon.ks-design.workers.dev` (Worker `alex-neon`
+  собирается из `kiaquila/alex-neon` через Git-интеграцию Cloudflare, см.
+  [«Cloudflare-стенд»](#cloudflare-стенд))
 
 ## Deliverable
 
@@ -81,26 +81,24 @@
 
 ## Cloudflare-стенд
 
-**Git-интеграция Cloudflare сейчас отключена.** Worker `alex-neon` существует в
-аккаунте владельца, но его не собирает ни этот репозиторий, ни какой-либо
-другой. Здесь нет ни одного секрета Cloudflare и ни одного deploy-workflow: CI
-работает с правами `contents: read`. Подключение — отдельное осознанное решение
-владельца аккаунта, а не часть изменений кода.
+Worker `alex-neon` подключён к `kiaquila/alex-neon` через Git-интеграцию
+Cloudflare и собирается из ветки `main`. Cloudflare публикует результат каждой
+такой сборки в GitHub как check `Workers Builds: alex-neon`. Секретов Cloudflare
+и deploy-workflow в репозитории по-прежнему нет: GitHub Actions CI работает с
+правами `contents: read`, а подключением и деплоем управляет Cloudflare.
 
 Лендинг статический: Cloudflare отдаёт его через Workers Static Assets из
 `website/dist`, а `website/worker/index.ts` нужен только чтобы навесить
 security-заголовки, которых нет у asset-пайплайна. `compatibility_date`
 зафиксирована.
 
-Целевые настройки сборки, порядок подключения и откат описаны в
+Целевые настройки сборки и быстрый откат на сохранённую версию Cloudflare
+описаны в
 [`docs/operations/cloudflare.md`](./docs/operations/cloudflare.md). Два
 репозитория не должны одновременно деплоить одну цель.
 
 ## Открытые вопросы
 
-- Подключение Git-интеграции Cloudflare для Worker'а `alex-neon` — одноразовый
-  шаг владельца аккаунта, см. [«Cloudflare-стенд»](#cloudflare-стенд). Пока она
-  отключена, стенд не пересобирается автоматически.
 - Индексация стенда: сейчас `robots.txt` разрешает обход (как у других
   проектов); если оригинал остаётся боевым, возможно, стоит закрыть стенд от
   индексации, чтобы не создавать дубль. Решение за заказчиком.
