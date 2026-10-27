@@ -9,7 +9,7 @@
   "type": "module",
   "overrides": {
     "sharp": "0.35.5",
-    "undici": "7.29.1"
+    "undici": "7.30.1"
   },
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -22,6 +22,6 @@
     "stage:preview": "WRANGLER_WRITE_LOGS=false WRANGLER_LOG_PATH=.wrangler/wrangler.log wrangler versions upload"
   },
   "devDependencies": {
-    "wrangler": "4.149.0"
+    "wrangler": "4.151.1"
   }
 }
