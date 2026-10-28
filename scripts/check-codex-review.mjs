@@ -7,6 +7,8 @@
 /* Each connection is paginated separately: a long-lived pull request can carry
    more than one page of review threads, and an older unresolved P0-P2 must not
    fall off the end and let the gate pass. */
+import { isNativeCleanComment, evaluateNativeEvidence } from "./native-codex-policy.mjs";
+
 const HEAD_QUERY = `query($owner:String!,$repo:String!,$number:Int!){
   repository(owner:$owner,name:$repo){pullRequest(number:$number){headRefOid}}
 }`;
@@ -15,7 +17,7 @@ const REVIEWS_QUERY = `query($owner:String!,$repo:String!,$number:Int!,$after:St
   repository(owner:$owner,name:$repo){pullRequest(number:$number){
     connection: reviews(first:100,after:$after){
       pageInfo{hasNextPage endCursor}
-      nodes{author{login} commit{oid}}
+      nodes{databaseId author{login __typename} commit{oid} state body submittedAt}
     }
   }}
 }`;
@@ -24,7 +26,7 @@ const THREADS_QUERY = `query($owner:String!,$repo:String!,$number:Int!,$after:St
   repository(owner:$owner,name:$repo){pullRequest(number:$number){
     connection: reviewThreads(first:100,after:$after){
       pageInfo{hasNextPage endCursor}
-      nodes{isResolved comments(first:1){nodes{path body}}}
+      nodes{isResolved comments(first:100){pageInfo{hasNextPage} nodes{databaseId author{login __typename} path body createdAt updatedAt}}}
     }
   }}
 }`;
@@ -33,30 +35,15 @@ const COMMENTS_QUERY = `query($owner:String!,$repo:String!,$number:Int!,$after:S
   repository(owner:$owner,name:$repo){pullRequest(number:$number){
     connection: comments(first:100,after:$after){
       pageInfo{hasNextPage endCursor}
-      nodes{author{login} body}
+      nodes{databaseId author{login __typename} authorAssociation body createdAt updatedAt}
     }
   }}
 }`;
 
-const CODEX = "chatgpt-codex-connector";
-/* Codex signs reviews as `chatgpt-codex-connector` and comments as
-   `chatgpt-codex-connector[bot]`. */
-const isCodex = (login) => login?.replace(/\[bot\]$/, "") === CODEX;
-
-/* Codex reports findings as a pull-request review, but when it finds nothing it
-   says so in a comment naming an abbreviated commit instead. Both are evidence
-   that this head was looked at; only the first can carry a blocking finding. */
-const REVIEWED_COMMIT = /Reviewed commit:\W*([0-9a-f]{7,40})/;
-
 export function commentReviews(comments, head) {
-  return comments.some((comment) => {
-    if (!isCodex(comment.author?.login)) return false;
-    const [, reviewed] = REVIEWED_COMMIT.exec(comment.body ?? "") ?? [];
-    return Boolean(reviewed) && head.startsWith(reviewed);
-  });
+  return comments.some(comment => isNativeCleanComment(comment, head));
 }
 
-const BLOCKING = /\bP[0-2]\b/;
 
 /* Codex opens a finding with a severity badge built from nested <sub> tags and
    an image link. Strip that furniture so the reported line is the title. */
@@ -71,15 +58,16 @@ export function headline(body) {
 
 export function evaluate(pullRequest, headSha) {
   const head = headSha || pullRequest.headRefOid;
-  const reviewed = pullRequest.reviews.nodes.some(
-    (review) => isCodex(review.author?.login) && review.commit?.oid === head
-  ) || commentReviews(pullRequest.comments?.nodes ?? [], head);
-  const blocking = pullRequest.reviewThreads.nodes
-    .filter((thread) => !thread.isResolved)
-    .map((thread) => thread.comments.nodes[0])
-    .filter((comment) => comment && BLOCKING.test(comment.body))
-    .map((comment) => `${comment.path}: ${headline(comment.body)}`);
-  return { head, reviewed, blocking };
+  const result = evaluateNativeEvidence({ head,
+    reviews: pullRequest.reviews.nodes,
+    comments: pullRequest.comments?.nodes || [],
+    threads: pullRequest.reviewThreads.nodes,
+  });
+  return { ...result, blocking: result.blocking.map(finding => {
+    const colon = finding.indexOf(": ");
+    return colon >= 0 ? finding.slice(0, colon + 2) + headline(finding.slice(colon + 2)) : finding;
+  }) };
+
 }
 
 async function graphql(token, query, variables) {
@@ -140,7 +128,7 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
     /* The head moving means a newer run is already queued for the new one. */
     if (headRefOid !== head) {
       console.log(`Skipped: PR #${number} head moved from ${head} to ${headRefOid}.`);
-      process.exit(0);
+      process.exit(1);
     }
 
     if (reviewed && blocking.length === 0) {
@@ -148,14 +136,21 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
          just before a review was submitted and the review just after it. Read
          the threads once more, now that the review is known to exist, so a
          finding submitted in that window cannot slip past. */
-      const settled = evaluate(
-        { ...pullRequest, reviewThreads: { nodes: await collectAll(token, THREADS_QUERY, variables) } },
-        process.env.CODEX_REVIEW_HEAD_SHA
-      );
-      if (settled.blocking.length === 0) {
-        console.log(`Codex reviewed ${head} with no unresolved P0-P2 finding.`);
+      const [finalReviews, finalThreads, finalComments] = await Promise.all([
+        collectAll(token, REVIEWS_QUERY, variables),
+        collectAll(token, THREADS_QUERY, variables),
+        collectAll(token, COMMENTS_QUERY, variables),
+      ]);
+      const finalHead = await graphql(token, HEAD_QUERY, variables);
+      const settled = evaluate({ headRefOid: finalHead.headRefOid,
+        reviews: { nodes: finalReviews }, reviewThreads: { nodes: finalThreads },
+        comments: { nodes: finalComments } }, head);
+      if (finalHead.headRefOid !== head) throw new Error("PR head moved during final verification");
+      if (settled.reviewed && settled.blocking.length === 0) {
+        console.log(`Native Codex approved ${head} with all review threads resolved.`);
         process.exit(0);
       }
+      if (!settled.blocking.length) throw new Error("Native approval changed during final verification");
       console.error(settled.blocking.map((finding) => `- Unresolved finding — ${finding}`).join("\n"));
       process.exit(1);
     }
