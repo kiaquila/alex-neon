@@ -310,9 +310,9 @@ const HEAD = "f41182e430a9c296ada67aaf6038d010023cbc90";
 function pull({ commit = HEAD, threads = [], comments = [] } = {}) {
   return {
     headRefOid: HEAD,
-    reviews: { nodes: [{ author: { login: "chatgpt-codex-connector" }, commit: { oid: commit } }] },
+    reviews: { nodes: [{ author: { login: "chatgpt-codex-connector", __typename: "Bot" }, commit: { oid: commit }, state: "APPROVED", body: `Codex Review: Didn't find any major issues.\n**Reviewed commit:** \`${HEAD}\``, submittedAt: "2026-10-01T12:01:00Z" }] },
     reviewThreads: { nodes: threads },
-    comments: { nodes: comments }
+    comments: { nodes: [{ databaseId: 1, author: { login: "owner", __typename: "User" }, authorAssociation: "OWNER", body: `@codex review ${HEAD}`, createdAt: "2026-10-01T12:00:00Z" }, ...comments] }
   };
 }
 
@@ -320,11 +320,13 @@ function pull({ commit = HEAD, threads = [], comments = [] } = {}) {
    as a review object, so the gate must accept that form too. */
 test("a clean verdict posted as a comment counts as a review of this head", () => {
   const clean = [{
-    author: { login: "chatgpt-codex-connector[bot]" },
+    author: { login: "chatgpt-codex-connector[bot]", __typename: "Bot" },
+    databaseId: 2, createdAt: "2026-10-01T12:01:00Z",
     body: `Codex Review: Didn't find any major issues. Nice work!\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``
   }];
   const other = [{
-    author: { login: "chatgpt-codex-connector[bot]" },
+    author: { login: "chatgpt-codex-connector[bot]", __typename: "Bot" },
+    databaseId: 2, createdAt: "2026-10-01T12:01:00Z",
     body: "Codex Review: fine.\n\n**Reviewed commit:** `0123456789`"
   }];
   const human = [{ author: { login: "kiaquila" }, body: `**Reviewed commit:** \`${HEAD}\`` }];
@@ -348,10 +350,10 @@ test("a finding is reported by its title, not its badge markup", () => {
   assert.equal(headline(body), "Paginate all threads");
 });
 
-test("the Codex gate blocks on unresolved P0-P2 findings only", () => {
-  const finding = (isResolved, body) => ({ isResolved, comments: { nodes: [{ path: "a.mjs", body }] } });
+test("the Codex gate blocks on every unresolved native finding", () => {
+  const finding = (isResolved, body) => ({ isResolved, comments: { nodes: [{ path: "a.mjs", body, author: { login: "chatgpt-codex-connector", __typename: "Bot" } }] } });
   assert.deepEqual(evaluate(pull({ threads: [finding(true, "**P1 Badge** Fix it")] }), HEAD).blocking, []);
-  assert.deepEqual(evaluate(pull({ threads: [finding(false, "**P3 Badge** Nit")] }), HEAD).blocking, []);
+  assert.deepEqual(evaluate(pull({ threads: [finding(false, "**P3 Badge** Nit")] }), HEAD).blocking, ["a.mjs: P3 Badge Nit"]);
   assert.deepEqual(
     evaluate(pull({ threads: [finding(false, "**P1 Badge** Fix it")] }), HEAD).blocking,
     ["a.mjs: P1 Badge Fix it"]
