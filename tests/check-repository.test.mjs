@@ -310,7 +310,7 @@ const HEAD = "f41182e430a9c296ada67aaf6038d010023cbc90";
 function pull({ commit = HEAD, threads = [], comments = [] } = {}) {
   return {
     headRefOid: HEAD,
-    reviews: { nodes: [{ author: { login: "chatgpt-codex-connector", __typename: "Bot" }, commit: { oid: commit }, state: "APPROVED", submittedAt: "2026-10-01T12:01:00Z" }] },
+    reviews: { nodes: [{ author: { login: "chatgpt-codex-connector", __typename: "Bot" }, commit: { oid: commit }, state: "APPROVED", body: `Codex Review: Didn't find any major issues.\n**Reviewed commit:** \`${HEAD}\``, submittedAt: "2026-10-01T12:01:00Z" }] },
     reviewThreads: { nodes: threads },
     comments: { nodes: [{ databaseId: 1, author: { login: "owner", __typename: "User" }, authorAssociation: "OWNER", body: `@codex review ${HEAD}`, createdAt: "2026-10-01T12:00:00Z" }, ...comments] }
   };
