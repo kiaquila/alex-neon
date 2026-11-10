@@ -36,6 +36,10 @@ test("every unresolved native thread blocks, including untagged and advisory fin
 test("structured completion, pending state and independent security findings remain distinct",()=>{
  const state=cleanStateBody(head);
  assert.equal(evaluate([record(state)]).reviewed,true);
+ const details=state.replace("\n\n## Codex Review Summary\n\n","\n\n<details>\n<summary><strong>Codex Review Summary</strong>: ✅ Completed</summary>\n\n")+"\n</details>";
+ const current=record(details,{id:4,created_at:"2026-10-20T11:59:00Z",updated_at:"2026-10-20T12:03:00Z"});
+ assert.equal(evaluate([record(receipt),current]).reviewed,true);
+ assert.equal(evaluate([record(receipt),{...current,body:details+"\nUntrusted trailing text"}]).reviewed,false);
  assert.equal(evaluate([record(state.replace('"has_any_findings":false','"has_any_findings":null'))]).reviewed,false);
  assert.equal(evaluate([record(state.replace('"completed"','"running"'))]).reviewed,false);
  assert.equal(evaluate([record(receipt),record(state+"\nAuthentication leaks credentials.",{id:3,updated_at:"2026-10-20T12:03:00Z"})]).reviewed,false);

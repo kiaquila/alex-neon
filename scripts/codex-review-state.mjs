@@ -49,6 +49,17 @@ const canonicalTimestamp = (value) => {
 const observationSecondEnd = (observed) =>
   Math.floor(observed / 1000) * 1000 + 1000;
 
+/* Codex now wraps the same structured summary in a collapsible details block.
+   Normalize only that exact service-owned envelope; the existing parser below
+   still validates the closed-schema state, visible table, clocks and footer. */
+const normalizeDetailsEnvelope = (body) => {
+  const source = String(body || "");
+  const match = source.match(
+    /^(<!-- codex-pull-request-review-summary -->\r?\n<!-- codex-review-state:v1 [^\r\n]+ -->)\r?\n\r?\n<details>\r?\n<summary><strong>Codex Review Summary<\/strong>: (?:✅ Completed|🔄 Running)<\/summary>\r?\n\r?\n([\s\S]*)\r?\n<\/details>[ \t]*$/,
+  );
+  return match ? `${match[1]}\n\n## Codex Review Summary\n\n${match[2]}` : source;
+};
+
 // A structured snapshot is authoritative only with one closed-schema machine
 // record and the matching native visible table. Prose and reactions are not proof.
 export const parseCodexState = (
@@ -56,6 +67,7 @@ export const parseCodexState = (
   head,
   { sectionHeads = false, negativeEnvelope = false } = {},
 ) => {
+  body = normalizeDetailsEnvelope(body);
   if (!/^[a-f0-9]{40}$/.test(head || "")) return false;
   const rawMarkerLine = String(body || "").match(
     /^[^\r\n]*<!-- codex-pull-request-review-summary -->[^\r\n]*$/m,
