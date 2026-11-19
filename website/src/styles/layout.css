@@ -379,15 +379,20 @@
 
 .footer-inner {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-4);
-  flex-wrap: wrap;
+  gap: var(--sp-2);
+  text-align: center;
 }
 
-.footer-copyright {
+.footer-copyright,
+.footer-credit {
   color: var(--text-3);
   font-size: var(--fs-small);
+}
+
+.footer-brand {
+  white-space: nowrap;
 }
 
 .footer-signature {
@@ -396,19 +401,17 @@
   justify-content: center;
   min-width: 44px;
   min-height: 44px;
+  vertical-align: middle;
+  color: var(--text-2);
   border-radius: var(--r-sm);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  transition: color var(--t-fast) var(--ease);
 }
 
-.footer-signature img {
-  width: clamp(3.825rem, 6.12vw, 4.59rem);
-  height: auto;
-  opacity: 0.68;
-  transition: opacity var(--t-fast) var(--ease);
-}
-
-.footer-signature:hover img,
-.footer-signature:focus-visible img {
-  opacity: 1;
+.footer-signature:hover,
+.footer-signature:focus-visible {
+  color: var(--text);
 }
 
 /* ---- Reveal on scroll (JS present; ≤ 250ms, fade + 10px rise) ------- */

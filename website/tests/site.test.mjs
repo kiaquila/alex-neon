@@ -473,23 +473,25 @@ test("the social card carries the current renderer fingerprint", async () => {
   );
 });
 
-test("the footer pairs the copyright with the linked KS Design signature", async () => {
+test("the footer preserves the copyright and approved developer credit", () => {
   const footer = html.slice(html.indexOf("<footer"));
   assert.ok(footer.includes("© Alex Oxitocin"), "copyright line missing");
   assert.ok(!footer.includes("<use"), "the footer no longer repeats the logo");
   assert.ok(
-    /<a[^>]*class="footer-signature"[^>]*href="https:\/\/ks-design\.art\/"/.test(footer),
-    "KS Design signature must link to the portfolio"
+    /<a[^>]*class="footer-signature"[^>]*href="https:\/\/ks-design\.art\/"[^>]*>ks-design<\/a>\.art/.test(footer),
+    "ks-design must link to the portfolio with .art immediately after the link"
   );
   assert.ok(
-    /<a[^>]*class="footer-signature"[^>]*aria-label="[^"]+"/.test(footer),
-    "the image-only signature link needs an accessible name"
+    /<p class="footer-credit" lang="en">/.test(footer),
+    "the English credit needs its own language"
   );
   assert.ok(
-    footer.includes('src="./assets/ks-design-signature.png"'),
-    "KS Design signature image missing"
+    footer.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").includes(
+      "Designed by ks-design.art · Built with AI workflows"
+    ),
+    "approved developer credit missing or changed"
   );
-  await access(join(dist, "assets/ks-design-signature.png"));
+  assert.ok(!footer.includes("<img"), "the footer credit must be text");
   for (const phrase of REMOVED_TEXT) {
     assert.ok(!text.includes(phrase), `text was removed but is still present: ${phrase}`);
   }
