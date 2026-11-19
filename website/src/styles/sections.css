@@ -578,9 +578,18 @@
 }
 
 @media (max-width: 44em) {
+  #contact {
+    padding-bottom: var(--sp-7);
+  }
+  .site-footer {
+    padding-block: var(--sp-6);
+  }
   .footer-inner {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--sp-2);
+  }
+  .footer-copyright {
+    justify-self: center;
   }
   .footer-credit {
     grid-column: 1;
