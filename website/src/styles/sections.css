@@ -543,3 +543,47 @@
   font-size: var(--fs-small);
   color: var(--text-2);
 }
+
+/* ---- Footer --------------------------------------------------------- */
+
+.site-footer {
+  border-top: 1px solid var(--line);
+  padding-block: var(--sp-7);
+}
+
+.footer-inner {
+  display: grid;
+  /* Equal side columns keep the credit on the page centre, independently of
+     the copyright's width. */
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.footer-copyright,
+.footer-credit {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.footer-copyright {
+  justify-self: start;
+  white-space: nowrap;
+}
+
+.footer-credit {
+  grid-column: 2;
+  text-align: center;
+  white-space: nowrap;
+}
+
+@media (max-width: 44em) {
+  .footer-inner {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-2);
+  }
+  .footer-credit {
+    grid-column: 1;
+    white-space: normal;
+  }
+}

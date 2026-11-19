@@ -186,3 +186,25 @@
 .nav-open .nav-toggle .bar:last-child {
   transform: translateY(-0.25rem) rotate(-45deg);
 }
+
+/* ---- Developer signature link --------------------------------------- */
+
+.footer-signature {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  white-space: nowrap;
+  vertical-align: middle;
+  color: var(--text-2);
+  border-radius: var(--r-sm);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  transition: color var(--t-fast) var(--ease);
+}
+
+.footer-signature:hover,
+.footer-signature:focus-visible {
+  color: var(--text);
+}

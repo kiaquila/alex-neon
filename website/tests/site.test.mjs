@@ -478,8 +478,8 @@ test("the footer preserves the copyright and approved developer credit", () => {
   assert.ok(footer.includes("© Alex Oxitocin"), "copyright line missing");
   assert.ok(!footer.includes("<use"), "the footer no longer repeats the logo");
   assert.ok(
-    /<a[^>]*class="footer-signature"[^>]*href="https:\/\/ks-design\.art\/"[^>]*>ks-design<\/a>\.art/.test(footer),
-    "ks-design must link to the portfolio with .art immediately after the link"
+    /<a[^>]*class="footer-signature"[^>]*href="https:\/\/ks-design\.art\/"[^>]*>ks-design\.art<\/a>/.test(footer),
+    "the whole ks-design.art name must link to the portfolio"
   );
   assert.ok(
     /<p class="footer-credit" lang="en">/.test(footer),
